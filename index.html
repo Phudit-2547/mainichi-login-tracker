@@ -184,6 +184,9 @@
     margin-bottom: 1px;
   }
   .game-nav:hover { background: var(--row-hover); }
+  .game-nav.dragging { opacity: 0.35; cursor: grabbing; }
+  .game-nav.drag-over-top { box-shadow: 0 -2px 0 0 var(--accent); }
+  .game-nav.drag-over-bottom { box-shadow: 0 2px 0 0 var(--accent); }
   .game-nav .dot {
     width: 7px;
     height: 7px;
@@ -341,12 +344,15 @@
     gap: 14px;
     padding: 11px 12px;
     border-radius: var(--radius);
-    cursor: pointer;
-    transition: background 120ms ease;
+    cursor: grab;
+    transition: background 120ms ease, box-shadow 120ms ease;
     background: transparent;
     border: none;
   }
   .game-card:hover { background: var(--row-hover); }
+  .game-card.dragging { opacity: 0.35; cursor: grabbing; }
+  .game-card.drag-over-top { box-shadow: 0 -2px 0 0 var(--accent); }
+  .game-card.drag-over-bottom { box-shadow: 0 2px 0 0 var(--accent); }
   .game-card.done .game-name {
     color: var(--text-muted);
     text-decoration: line-through;
@@ -935,6 +941,79 @@ function toggleLogin(id) {
 }
 
 /* ============================================================
+   Drag-to-reorder
+   ============================================================ */
+let draggedId = null;
+
+function onDragStart(e) {
+  draggedId = e.currentTarget.dataset.id;
+  e.currentTarget.classList.add('dragging');
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', draggedId);
+  }
+}
+
+function onDragOver(e) {
+  if (!draggedId) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  const rect = e.currentTarget.getBoundingClientRect();
+  const isAbove = e.clientY < rect.top + rect.height / 2;
+  e.currentTarget.classList.toggle('drag-over-top', isAbove);
+  e.currentTarget.classList.toggle('drag-over-bottom', !isAbove);
+}
+
+function onDragEnter(e) {
+  if (!draggedId) return;
+  e.preventDefault();
+}
+
+function onDragLeave(e) {
+  if (e.currentTarget.contains(e.relatedTarget)) return;
+  e.currentTarget.classList.remove('drag-over-top', 'drag-over-bottom');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const target = e.currentTarget;
+  target.classList.remove('drag-over-top', 'drag-over-bottom');
+  const targetId = target.dataset.id;
+  if (!draggedId || targetId === draggedId) { draggedId = null; return; }
+  const rect = target.getBoundingClientRect();
+  const isAbove = e.clientY < rect.top + rect.height / 2;
+  const fromIdx = state.games.findIndex(g => g.id === draggedId);
+  const origToIdx = state.games.findIndex(g => g.id === targetId);
+  if (fromIdx === -1 || origToIdx === -1) { draggedId = null; return; }
+  const [moved] = state.games.splice(fromIdx, 1);
+  let targetNewIdx = origToIdx > fromIdx ? origToIdx - 1 : origToIdx;
+  const insertAt = isAbove ? targetNewIdx : targetNewIdx + 1;
+  state.games.splice(insertAt, 0, moved);
+  draggedId = null;
+  save();
+  render();
+}
+
+function onDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.drag-over-top, .drag-over-bottom').forEach(el => {
+    el.classList.remove('drag-over-top', 'drag-over-bottom');
+  });
+  draggedId = null;
+}
+
+function attachDragHandlers(el) {
+  el.setAttribute('draggable', 'true');
+  el.addEventListener('dragstart', onDragStart);
+  el.addEventListener('dragover', onDragOver);
+  el.addEventListener('dragenter', onDragEnter);
+  el.addEventListener('dragleave', onDragLeave);
+  el.addEventListener('drop', onDrop);
+  el.addEventListener('dragend', onDragEnd);
+}
+
+/* ============================================================
    DOM helpers
    ============================================================ */
 function el(tag, attrs, children) {
@@ -985,14 +1064,8 @@ function renderSidebar() {
     return;
   }
   section.hidden = false;
-  const sorted = [...state.games].sort((a, b) => {
-    // Available first (sorted by next reset), then done, both by name within group
-    const sa = getStatus(a, now), sb = getStatus(b, now);
-    if (sa !== sb) return sa === 'available' ? -1 : 1;
-    if (sa === 'available') return getNextCycleStart(now, a) - getNextCycleStart(now, b);
-    return a.name.localeCompare(b.name);
-  });
-  sorted.forEach(g => {
+  // Render in user-defined order (matches main list; drag-to-reorder stays in sync)
+  state.games.forEach(g => {
     const status = getStatus(g, now);
     const streak = getStreak(g, now);
     const btn = el('button', { class: `game-nav ${status}`, type: 'button', dataset: { id: g.id } });
@@ -1002,6 +1075,7 @@ function renderSidebar() {
       btn.appendChild(el('span', { class: 'meta' }, `🔥${streak}`));
     }
     btn.addEventListener('click', () => openModal(g.id));
+    attachDragHandlers(btn);
     list.appendChild(btn);
   });
 }
@@ -1025,8 +1099,7 @@ function renderMain() {
 
   const buckets = { available: [], done: [] };
   state.games.forEach(g => buckets[getStatus(g, now)].push(g));
-  buckets.available.sort((a, b) => getNextCycleStart(now, a) - getNextCycleStart(now, b));
-  buckets.done.sort((a, b) => a.name.localeCompare(b.name));
+  // Render in user-defined order within each section (preserves drag-to-reorder)
 
   sectionsEl.innerHTML = '';
   if (buckets.available.length) {
@@ -1066,6 +1139,7 @@ function renderGameCard(g) {
     role: 'button',
     tabindex: '0',
   });
+  attachDragHandlers(card);
 
   const checkbox = el('div', {
     class: `checkbox ${status === 'done' ? 'done' : ''}`,
