@@ -4,63 +4,53 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Daily — Gacha Login Tracker</title>
+<title>Mainichi — Gacha Login Tracker</title>
 <style>
   /* ==================================================
-     Design tokens
+     Design tokens — Things 3 inspired
      ================================================== */
   :root {
     --bg: #FAFAFA;
-    --sidebar-bg: #F5F5F7;
+    --sidebar-bg: rgba(245, 245, 247, 0.7);
     --card: #FFFFFF;
-    --card-hover: #FFFFFF;
-    --border: #E5E5E7;
-    --border-strong: #D1D1D6;
+    --row-hover: rgba(0, 0, 0, 0.035);
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.14);
     --text: #1C1C1E;
     --text-secondary: #3C3C43;
     --text-muted: #8E8E93;
     --text-faint: #C7C7CC;
     --accent: #007AFF;
-    --accent-soft: rgba(0, 122, 255, 0.12);
+    --accent-soft: rgba(0, 122, 255, 0.08);
     --success: #34C759;
     --success-soft: rgba(52, 199, 89, 0.14);
     --warning: #FF9500;
-    --warning-soft: rgba(255, 149, 0, 0.14);
     --danger: #FF3B30;
-    --danger-soft: rgba(255, 59, 48, 0.12);
-    --shadow-card: 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
-    --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04);
-    --shadow-modal: 0 24px 64px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.04);
-    --radius: 10px;
-    --radius-sm: 6px;
-    --radius-lg: 14px;
-    --transition: 180ms cubic-bezier(.2, .8, .2, 1);
+    --radius: 6px;
+    --radius-lg: 12px;
+    --transition: 160ms cubic-bezier(.2, .8, .2, 1);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #1C1C1E;
-      --sidebar-bg: #000000;
+      --sidebar-bg: rgba(40, 40, 42, 0.7);
       --card: #2C2C2E;
-      --card-hover: #3A3A3C;
-      --border: #38383A;
-      --border-strong: #48484A;
+      --row-hover: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.16);
       --text: #FFFFFF;
       --text-secondary: #EBEBF5;
       --text-muted: #8E8E93;
       --text-faint: #48484A;
       --accent: #0A84FF;
-      --accent-soft: rgba(10, 132, 255, 0.2);
+      --accent-soft: rgba(10, 132, 255, 0.18);
       --success: #30D158;
       --success-soft: rgba(48, 209, 88, 0.18);
       --warning: #FF9F0A;
-      --warning-soft: rgba(255, 159, 10, 0.18);
       --danger: #FF453A;
-      --danger-soft: rgba(255, 69, 58, 0.18);
-      --shadow-card: 0 1px 2px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04);
-      --shadow-card-hover: 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06);
-      --shadow-modal: 0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.06);
     }
   }
 
@@ -79,8 +69,8 @@
     -moz-osx-font-smoothing: grayscale;
     overflow: hidden;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "cv11";
   }
-
   button {
     font-family: inherit;
     font-size: inherit;
@@ -90,7 +80,6 @@
     color: inherit;
     padding: 0;
   }
-
   input, select, textarea {
     font-family: inherit;
     font-size: inherit;
@@ -102,127 +91,189 @@
      ================================================== */
   .app {
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 232px 1fr;
     height: 100vh;
     width: 100vw;
   }
 
   /* ==================================================
-     Sidebar
+     Sidebar — translucent, narrow, Things-style
      ================================================== */
   .sidebar {
     background: var(--sidebar-bg);
+    backdrop-filter: saturate(180%) blur(24px);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-  }
-
-  .brand {
-    padding: 20px 22px 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
     user-select: none;
   }
 
-  .brand-mark {
+  .brand {
+    padding: 14px 18px 10px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .brand-icon {
     width: 22px;
     height: 22px;
-    border-radius: 50%;
-    background:
-      conic-gradient(from 0deg,
-        var(--accent) 0deg 270deg,
-        var(--success) 270deg 360deg);
     flex-shrink: 0;
-    position: relative;
+    color: var(--text);
   }
-
-  .brand-mark::after {
-    content: '';
-    position: absolute;
-    inset: 4px;
-    border-radius: 50%;
-    background: var(--sidebar-bg);
-  }
-
   .brand-name {
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 600;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.012em;
     color: var(--text);
   }
 
   .nav {
-    padding: 6px 10px;
+    padding: 0 10px;
     flex: 1;
     overflow-y: auto;
+    margin-top: 4px;
   }
-
-  .nav-section {
-    margin-top: 14px;
-  }
-
-  .nav-section:first-child { margin-top: 4px; }
-
+  .nav-section { margin-bottom: 16px; }
   .nav-section-title {
-    padding: 0 12px 4px;
-    font-size: 11px;
+    padding: 0 10px 4px;
+    font-size: 10.5px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     color: var(--text-muted);
   }
-
   .nav-item {
     display: flex;
     align-items: center;
     width: 100%;
-    padding: 6px 12px;
-    border-radius: var(--radius-sm);
-    font-size: 13.5px;
-    color: var(--text-secondary);
-    transition: background var(--transition), color var(--transition);
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 13px;
+    color: var(--text);
+    transition: background var(--transition);
     text-align: left;
     margin-bottom: 1px;
   }
-
-  .nav-item:hover {
-    background: rgba(0,0,0,0.04);
-  }
-  @media (prefers-color-scheme: dark) {
-    .nav-item:hover { background: rgba(255,255,255,0.06); }
-  }
-
+  .nav-item:hover { background: var(--row-hover); }
   .nav-item.active {
     background: var(--accent);
     color: white;
     font-weight: 500;
   }
-
+  .nav-item.active .count { color: rgba(255,255,255,0.75); }
   .nav-item .count {
     margin-left: auto;
-    font-size: 12px;
+    font-size: 11.5px;
     color: var(--text-muted);
-    font-weight: 400;
-  }
-  .nav-item.active .count {
-    color: rgba(255,255,255,0.78);
+    font-variant-numeric: tabular-nums;
   }
 
-  .sidebar-footer {
-    padding: 12px 14px 16px;
-    border-top: 1px solid var(--border);
+  /* Games listed as projects in the sidebar */
+  .game-nav {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    transition: background var(--transition);
+    text-align: left;
+    margin-bottom: 1px;
   }
+  .game-nav:hover { background: var(--row-hover); }
+  .game-nav .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 8px;
+  }
+  .game-nav.done .name { color: var(--text-muted); text-decoration: line-through; }
+  .game-nav .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .game-nav .meta {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    padding-left: 6px;
+  }
+
+  /* Sidebar footer */
+  .sidebar-bottom {
+    padding: 10px 14px 14px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sync-card {
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .sync-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sync-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    transition: background var(--transition);
+  }
+  .sync-dot.synced { background: var(--success); }
+  .sync-dot.syncing { background: var(--warning); animation: sync-pulse 1.2s ease-in-out infinite; }
+  .sync-dot.offline { background: var(--danger); }
+  @keyframes sync-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  .sync-status { font-weight: 500; color: var(--text-secondary); }
+  .sync-code {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 7px;
+    cursor: pointer;
+    user-select: all;
+    word-break: break-all;
+    color: var(--text-secondary);
+    transition: border-color var(--transition), color var(--transition);
+    line-height: 1.3;
+    margin-top: 5px;
+  }
+  .sync-code:hover { border-color: var(--accent); }
+  .sync-code.copied { border-color: var(--success); color: var(--success); }
+  .sync-link {
+    font-size: 11px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 0 0;
+    text-align: left;
+  }
+  .sync-link:hover { text-decoration: underline; }
 
   .add-btn {
     width: 100%;
-    padding: 8px 12px;
-    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    border-radius: 5px;
     background: var(--accent);
     color: white;
     font-weight: 500;
-    font-size: 13.5px;
+    font-size: 13px;
     transition: opacity var(--transition), transform var(--transition);
   }
   .add-btn:hover { opacity: 0.9; }
@@ -234,230 +285,189 @@
   .main {
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0 40px 80px;
+    padding: 0 44px 80px;
   }
 
   .main-header {
-    padding: 36px 0 16px;
+    padding: 28px 0 14px;
     position: sticky;
     top: 0;
     background: var(--bg);
     z-index: 5;
   }
-
   .view-title {
-    font-size: 32px;
+    font-size: 34px;
     font-weight: 700;
-    letter-spacing: -0.022em;
-    margin: 0 0 4px;
+    letter-spacing: -0.024em;
+    margin: 0 0 2px;
     line-height: 1.1;
   }
-
   .view-subtitle {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--text-muted);
+    margin-top: 3px;
   }
 
-  .section {
-    margin-top: 24px;
-  }
-
+  .section { margin-top: 22px; }
   .section-title {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.07em;
     color: var(--text-muted);
-    margin: 0 0 8px;
-    padding: 0 2px;
+    margin: 0 0 4px;
+    padding: 0 4px;
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 8px;
   }
-
-  .section-title .badge {
-    background: var(--text-faint);
-    color: var(--bg);
-    padding: 1px 7px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0;
+  .section-title .count {
+    font-weight: 500;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
   }
-  .section-title.success .badge { background: var(--success); }
-  .section-title.warning .badge { background: var(--warning); }
 
   /* ==================================================
-     Game card
+     Task rows — flat, no shadows
      ================================================== */
   .game-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
   }
-
   .game-card {
-    background: var(--card);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-card);
-    padding: 12px 14px;
     display: grid;
     grid-template-columns: auto 1fr auto;
-    align-items: center;
+    align-items: start;
     gap: 14px;
+    padding: 11px 12px;
+    border-radius: var(--radius);
     cursor: pointer;
-    transition: transform var(--transition), box-shadow var(--transition), background var(--transition);
+    transition: background 120ms ease;
+    background: transparent;
+    border: none;
   }
-
-  .game-card:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-card-hover);
-    background: var(--card-hover);
+  .game-card:hover { background: var(--row-hover); }
+  .game-card.done .game-name {
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
   }
+  .game-card.done .checkbox { background: var(--success); border-color: var(--success); }
 
   .checkbox {
-    width: 22px;
-    height: 22px;
+    width: 19px;
+    height: 19px;
     border-radius: 50%;
     border: 1.5px solid var(--border-strong);
+    margin-top: 2px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background var(--transition), border-color var(--transition);
     flex-shrink: 0;
   }
-  .checkbox.done {
-    background: var(--success);
-    border-color: var(--success);
-  }
   .checkbox.done::after {
     content: '';
-    width: 6px;
-    height: 11px;
+    width: 5px;
+    height: 9px;
     border-right: 2px solid white;
     border-bottom: 2px solid white;
-    transform: rotate(45deg);
-    margin-bottom: 2px;
+    transform: rotate(45deg) translate(-1px, -1px);
     animation: check-pop 200ms cubic-bezier(.2, 1.4, .4, 1);
   }
   @keyframes check-pop {
-    0% { transform: rotate(45deg) scale(0); }
-    100% { transform: rotate(45deg) scale(1); }
+    0% { transform: rotate(45deg) translate(-1px, -1px) scale(0); }
+    100% { transform: rotate(45deg) translate(-1px, -1px) scale(1); }
   }
 
-  .game-info {
-    min-width: 0;
-  }
-
+  .game-info { min-width: 0; }
   .game-name {
     font-size: 14.5px;
     font-weight: 500;
     color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 9px;
-  }
-
-  .game-card.done .game-name {
-    color: var(--text-muted);
-    text-decoration: line-through;
-    text-decoration-color: var(--text-faint);
-    text-decoration-thickness: 1.5px;
-  }
-
-  .color-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .game-meta {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    margin-top: 3px;
+    line-height: 1.35;
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
   }
-
+  .game-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    line-height: 1.35;
+  }
+  .meta-note { font-style: italic; }
   .meta-sep {
+    display: inline-block;
     width: 3px;
     height: 3px;
     border-radius: 50%;
     background: var(--text-faint);
-    flex-shrink: 0;
-  }
-
-  .meta-note {
-    color: var(--text-muted);
-    font-style: italic;
+    margin: 0 7px;
+    vertical-align: middle;
   }
 
   .game-right {
     text-align: right;
     flex-shrink: 0;
+    padding-top: 1px;
   }
-
   .streak {
-    font-size: 12.5px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
     color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    justify-content: flex-end;
-    line-height: 1.2;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
   }
-  .streak .flame { font-size: 12px; }
-  .streak.zero { color: var(--text-faint); font-weight: 500; }
-
+  .streak.zero { color: var(--text-faint); font-weight: 400; }
   .reset-in {
-    font-size: 11.5px;
+    font-size: 11px;
     color: var(--text-muted);
     margin-top: 2px;
-    line-height: 1.2;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
   }
-  .reset-in.urgent { color: var(--warning); font-weight: 500; }
-  .reset-in.now { color: var(--accent); font-weight: 600; }
+  .reset-in.urgent { color: var(--warning); }
+  .reset-in.now { color: var(--accent); font-weight: 500; }
 
   /* ==================================================
      Empty state
      ================================================== */
   .empty-state {
     text-align: center;
-    padding: 96px 32px 64px;
+    padding: 110px 32px 64px;
     color: var(--text-muted);
   }
-  .empty-state .icon {
-    font-size: 40px;
-    margin-bottom: 16px;
-    opacity: 0.4;
+  .empty-state .glyph {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 18px;
+    opacity: 0.35;
   }
   .empty-state h3 {
     font-size: 20px;
     font-weight: 600;
     color: var(--text);
     margin: 0 0 8px;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.012em;
   }
   .empty-state p {
     margin: 0 auto 22px;
-    font-size: 14px;
+    font-size: 13.5px;
     max-width: 340px;
+    line-height: 1.5;
   }
   .empty-state button {
     background: var(--accent);
     color: white;
-    padding: 9px 20px;
-    border-radius: var(--radius-sm);
+    padding: 8px 18px;
+    border-radius: 5px;
     font-weight: 500;
-    font-size: 14px;
+    font-size: 13.5px;
   }
 
   /* ==================================================
-     Modal
+     Modal — refined
      ================================================== */
   .modal {
     position: fixed;
@@ -471,29 +481,26 @@
     opacity: 0;
     transition: opacity 200ms ease;
   }
-  .modal.open {
-    pointer-events: auto;
-    opacity: 1;
-  }
+  .modal.open { pointer-events: auto; opacity: 1; }
 
   .modal-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(0,0,0,0.36);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(0,0,0,0.32);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   .modal-content {
     position: relative;
     background: var(--card);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-modal);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.06);
     width: 100%;
-    max-width: 420px;
+    max-width: 400px;
     max-height: 90vh;
     overflow-y: auto;
-    padding: 22px 24px 18px;
+    padding: 22px 22px 16px;
     transform: scale(0.96) translateY(8px);
     transition: transform 220ms cubic-bezier(.2, .8, .2, 1);
   }
@@ -502,38 +509,32 @@
   }
 
   .modal-title {
-    font-size: 17px;
+    font-size: 16px;
     font-weight: 600;
-    margin: 0 0 18px;
-    letter-spacing: -0.005em;
+    margin: 0 0 16px;
+    letter-spacing: -0.008em;
   }
-
-  .form-group {
-    margin-bottom: 14px;
-  }
-
+  .form-group { margin-bottom: 12px; }
   .form-group label {
     display: block;
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 600;
     color: var(--text-muted);
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
   }
-
   .form-group input[type="text"],
   .form-group input[type="time"],
   .form-group select,
   .form-group textarea {
     width: 100%;
-    padding: 9px 11px;
+    padding: 8px 10px;
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: 5px;
     background: var(--bg);
     transition: border-color var(--transition), background var(--transition);
   }
-
   .form-group input:focus,
   .form-group select:focus,
   .form-group textarea:focus {
@@ -542,114 +543,45 @@
     background: var(--card);
   }
 
-  .form-row {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr;
-    gap: 12px;
-  }
-
   .swatches {
     display: flex;
-    gap: 10px;
+    gap: 9px;
     flex-wrap: wrap;
   }
-
   .swatch {
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     cursor: pointer;
     border: 2px solid transparent;
     transition: transform var(--transition), border-color var(--transition);
     padding: 0;
   }
-  .swatch:hover { transform: scale(1.08); }
+  .swatch:hover { transform: scale(1.1); }
   .swatch.selected {
     border-color: var(--text);
-    transform: scale(1.1);
+    transform: scale(1.12);
   }
 
   .modal-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    margin-top: 22px;
+    gap: 6px;
+    margin-top: 18px;
     align-items: center;
   }
-
   .btn {
-    padding: 8px 16px;
-    border-radius: var(--radius-sm);
+    padding: 6px 14px;
+    border-radius: 5px;
     font-weight: 500;
-    font-size: 13.5px;
+    font-size: 13px;
     transition: opacity var(--transition), transform var(--transition);
   }
   .btn:hover { opacity: 0.85; }
   .btn:active { transform: scale(0.98); }
   .btn-primary { background: var(--accent); color: white; }
-  .btn-secondary { background: var(--text-faint); color: var(--text); }
+  .btn-secondary { background: var(--row-hover); color: var(--text); }
   .btn-danger { background: var(--danger); color: white; margin-right: auto; }
-
-  /* ==================================================
-     Sync card
-     ================================================== */
-  .sync-card {
-    padding: 4px 12px 6px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-  .sync-row {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-bottom: 6px;
-  }
-  .sync-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-faint);
-    flex-shrink: 0;
-    transition: background var(--transition);
-  }
-  .sync-dot.synced { background: var(--success); }
-  .sync-dot.syncing { background: var(--warning); animation: sync-pulse 1.2s ease-in-out infinite; }
-  .sync-dot.offline { background: var(--danger); }
-  @keyframes sync-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
-  .sync-status {
-    font-weight: 500;
-    color: var(--text-secondary);
-  }
-  .sync-code {
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 11px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 5px 8px;
-    cursor: pointer;
-    user-select: all;
-    word-break: break-all;
-    color: var(--text-secondary);
-    transition: border-color var(--transition), color var(--transition);
-    line-height: 1.3;
-    margin-bottom: 6px;
-  }
-  .sync-code:hover { border-color: var(--accent); }
-  .sync-code.copied { border-color: var(--success); color: var(--success); }
-  .sync-link {
-    font-size: 11.5px;
-    color: var(--accent);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 2px 0;
-    text-align: left;
-  }
-  .sync-link:hover { text-decoration: underline; }
 
   /* ==================================================
      Scrollbars
@@ -671,8 +603,16 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark"></div>
-        <div class="brand-name">Daily</div>
+        <!-- Things-style checklist icon: two checkboxes + two lines -->
+        <svg class="brand-icon" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect x="1.5" y="3.5" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.6" fill="none"/>
+          <path d="M2.8 6 L4.2 7.4 L5.6 5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <rect x="1.5" y="13.5" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.6" fill="none"/>
+          <path d="M2.8 16 L4.2 17.4 L5.6 15.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <line x1="9.5" y1="6" x2="20.5" y2="6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <line x1="9.5" y1="16" x2="20.5" y2="16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div class="brand-name">Mainichi</div>
       </div>
       <nav class="nav" id="nav">
         <div class="nav-section">
@@ -681,20 +621,25 @@
             <span>Today</span>
             <span class="count" data-count="today">0</span>
           </button>
+          <button class="nav-item" data-view="all">
+            <span>All Games</span>
+            <span class="count" data-count="all">0</span>
+          </button>
         </div>
-        <div class="nav-section">
-          <div class="nav-section-title">Sync</div>
-          <div class="sync-card">
-            <div class="sync-row">
-              <span class="sync-dot" id="sync-dot"></span>
-              <span class="sync-status" id="sync-status">local only</span>
-            </div>
-            <div class="sync-code" id="sync-code" title="Click to copy" tabindex="0">···</div>
-            <button class="sync-link" id="sync-change" type="button">use a different code</button>
-          </div>
+        <div class="nav-section" id="games-section" hidden>
+          <div class="nav-section-title">Games</div>
+          <div id="games-list"></div>
         </div>
       </nav>
-      <div class="sidebar-footer">
+      <div class="sidebar-bottom">
+        <div class="sync-card">
+          <div class="sync-row">
+            <span class="sync-dot" id="sync-dot"></span>
+            <span class="sync-status" id="sync-status">local only</span>
+          </div>
+          <div class="sync-code" id="sync-code" title="Click to copy" tabindex="0">···</div>
+          <button class="sync-link" id="sync-change" type="button">use a different code</button>
+        </div>
         <button class="add-btn" id="add-btn">+ Add Game</button>
       </div>
     </aside>
@@ -776,6 +721,37 @@ function save() {
   }
 }
 
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function migrateGame(g) {
+  return {
+    id: typeof g.id === 'string' ? g.id : uid(),
+    name: typeof g.name === 'string' && g.name.trim() ? g.name : 'Unnamed',
+    resetHour: Number.isInteger(g.resetHour) ? g.resetHour : 4,
+    resetMinute: Number.isInteger(g.resetMinute) ? g.resetMinute : 0,
+    color: typeof g.color === 'string' ? g.color : COLORS[0],
+    note: typeof g.note === 'string' ? g.note : '',
+    lastLogin: typeof g.lastLogin === 'string' ? g.lastLogin : null,
+    createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
+  };
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.games)) {
+      state.games = parsed.games.map(migrateGame);
+      state.view = 'today';
+    }
+  } catch (e) {
+    console.warn('Load failed:', e);
+  }
+}
+
 /* ============================================================
    Sync (Neon Postgres via /api/sync)
    ============================================================ */
@@ -789,7 +765,7 @@ function getDeviceId() {
   return id;
 }
 
-let syncState = 'idle'; // idle | syncing | synced | offline
+let syncState = 'idle';
 let syncTimer = null;
 
 function updateSyncIndicator() {
@@ -851,43 +827,9 @@ function scheduleSync() {
   syncTimer = setTimeout(pushToServer, 400);
 }
 
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
-function migrateGame(g) {
-  return {
-    id: typeof g.id === 'string' ? g.id : uid(),
-    name: typeof g.name === 'string' && g.name.trim() ? g.name : 'Unnamed',
-    resetHour: Number.isInteger(g.resetHour) ? g.resetHour : 4,
-    resetMinute: Number.isInteger(g.resetMinute) ? g.resetMinute : 0,
-    color: typeof g.color === 'string' ? g.color : COLORS[0],
-    note: typeof g.note === 'string' ? g.note : '',
-    lastLogin: typeof g.lastLogin === 'string' ? g.lastLogin : null,
-    createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
-  };
-}
-
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.games)) {
-      state.games = parsed.games.map(migrateGame);
-      state.view = 'today';
-    }
-  } catch (e) {
-    console.warn('Load failed:', e);
-  }
-}
-
 /* ============================================================
    Time math
    ============================================================ */
-// Reset time is just HH:MM on the device clock. A cycle is "today at
-// HH:MM" or "yesterday at HH:MM" depending on whether we've passed it.
-
 function getCycleStart(now, game) {
   const cycle = new Date(now);
   cycle.setHours(game.resetHour, game.resetMinute, 0, 0);
@@ -896,28 +838,21 @@ function getCycleStart(now, game) {
   }
   return cycle;
 }
-
 function getNextCycleStart(now, game) {
   return new Date(getCycleStart(now, game).getTime() + 24 * 3600 * 1000);
 }
-
-// Returns 'done' or 'available'
 function getStatus(game, now) {
   if (!game.lastLogin) return 'available';
   const currentCycle = getCycleStart(now, game);
   const loginCycle = getCycleStart(new Date(game.lastLogin), game);
   return loginCycle.getTime() === currentCycle.getTime() ? 'done' : 'available';
 }
-
-// Counts consecutive cycles (going back from now) where lastLogin landed in that cycle.
-// The current cycle counts even if not yet logged in — that's expected.
 function getStreak(game, now) {
   if (!game.lastLogin) return 0;
   let cycle = getCycleStart(now, game);
   const loginDate = new Date(game.lastLogin);
   let count = 0;
   let currentCycle = true;
-  // Hard cap at 365 to avoid runaway loops on bad data
   for (let i = 0; i < 365; i++) {
     const loginCycle = getCycleStart(loginDate, game);
     if (loginCycle.getTime() === cycle.getTime()) {
@@ -930,15 +865,13 @@ function getStreak(game, now) {
   }
   return count;
 }
-
 function formatResetCountdown(now, game) {
   const ms = getNextCycleStart(now, game).getTime() - now.getTime();
   if (ms <= 0) return { text: 'resetting…', cls: 'now' };
   const totalMin = Math.floor(ms / 60000);
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  let text;
-  let cls = '';
+  let text, cls = '';
   if (h >= 24) {
     const d = Math.floor(h / 24);
     text = `resets in ${d}d ${h % 24}h`;
@@ -953,7 +886,6 @@ function formatResetCountdown(now, game) {
   }
   return { text, cls };
 }
-
 function formatResetTime(game) {
   return `Resets at ${String(game.resetHour).padStart(2,'0')}:${String(game.resetMinute).padStart(2,'0')}`;
 }
@@ -976,7 +908,6 @@ function addGame(data) {
   save();
   render();
 }
-
 function updateGame(id, data) {
   const g = state.games.find(x => x.id === id);
   if (!g) return;
@@ -989,13 +920,11 @@ function updateGame(id, data) {
   save();
   render();
 }
-
 function deleteGame(id) {
   state.games = state.games.filter(g => g.id !== id);
   save();
   render();
 }
-
 function toggleLogin(id) {
   const g = state.games.find(x => x.id === id);
   if (!g) return;
@@ -1039,9 +968,42 @@ function render() {
 }
 
 function renderSidebar() {
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === state.view);
+  });
   const now = new Date();
   const remaining = state.games.filter(g => getStatus(g, now) === 'available').length;
   document.querySelector('[data-count="today"]').textContent = remaining;
+  document.querySelector('[data-count="all"]').textContent = state.games.length;
+
+  // Game list as "projects" in sidebar
+  const section = document.getElementById('games-section');
+  const list = document.getElementById('games-list');
+  list.innerHTML = '';
+  if (state.games.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const sorted = [...state.games].sort((a, b) => {
+    // Available first (sorted by next reset), then done, both by name within group
+    const sa = getStatus(a, now), sb = getStatus(b, now);
+    if (sa !== sb) return sa === 'available' ? -1 : 1;
+    if (sa === 'available') return getNextCycleStart(now, a) - getNextCycleStart(now, b);
+    return a.name.localeCompare(b.name);
+  });
+  sorted.forEach(g => {
+    const status = getStatus(g, now);
+    const streak = getStreak(g, now);
+    const btn = el('button', { class: `game-nav ${status}`, type: 'button', dataset: { id: g.id } });
+    btn.appendChild(el('span', { class: 'dot', style: `background:${g.color}` }));
+    btn.appendChild(el('span', { class: 'name' }, g.name));
+    if (streak > 0) {
+      btn.appendChild(el('span', { class: 'meta' }, `🔥${streak}`));
+    }
+    btn.addEventListener('click', () => openModal(g.id));
+    list.appendChild(btn);
+  });
 }
 
 function renderMain() {
@@ -1063,15 +1025,15 @@ function renderMain() {
 
   const buckets = { available: [], done: [] };
   state.games.forEach(g => buckets[getStatus(g, now)].push(g));
-  // Available first sorted by urgency (next reset ascending), done sorted by name
   buckets.available.sort((a, b) => getNextCycleStart(now, a) - getNextCycleStart(now, b));
   buckets.done.sort((a, b) => a.name.localeCompare(b.name));
+
   sectionsEl.innerHTML = '';
   if (buckets.available.length) {
-    sectionsEl.appendChild(renderSection('Available now', 'warning', buckets.available));
+    sectionsEl.appendChild(renderSection('Available now', buckets.available.length, buckets.available));
   }
   if (buckets.done.length) {
-    sectionsEl.appendChild(renderSection('Logged in today', 'success', buckets.done));
+    sectionsEl.appendChild(renderSection('Logged in today', buckets.done.length, buckets.done));
   }
 }
 
@@ -1079,14 +1041,12 @@ function formatDate(d) {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-function renderSection(title, kind, games) {
+function renderSection(title, count, games) {
   const wrap = el('div', { class: 'section' });
-  if (title) {
-    wrap.appendChild(el('div', { class: `section-title ${kind || ''}` }, [
-      title,
-      el('span', { class: 'badge' }, String(games.length)),
-    ]));
-  }
+  wrap.appendChild(el('div', { class: 'section-title' }, [
+    title,
+    el('span', { class: 'count' }, String(count)),
+  ]));
   const list = el('div', { class: 'game-list' });
   games.forEach(g => list.appendChild(renderGameCard(g)));
   wrap.appendChild(list);
@@ -1120,11 +1080,7 @@ function renderGameCard(g) {
   card.appendChild(checkbox);
 
   const info = el('div', { class: 'game-info' });
-  info.appendChild(el('div', { class: 'game-name' }, [
-    el('span', { class: 'color-dot', style: `background:${g.color}` }),
-    g.name,
-  ]));
-
+  info.appendChild(el('div', { class: 'game-name' }, g.name));
   const meta = el('div', { class: 'game-meta' }, [resetLabel]);
   if (g.note) {
     meta.appendChild(el('span', { class: 'meta-sep' }));
@@ -1135,12 +1091,9 @@ function renderGameCard(g) {
 
   const right = el('div', { class: 'game-right' });
   if (streak > 0) {
-    right.appendChild(el('div', { class: 'streak' }, [
-      el('span', { class: 'flame' }, '\u{1F525}'),
-      `${streak} day${streak === 1 ? '' : 's'}`,
-    ]));
+    right.appendChild(el('div', { class: 'streak' }, `🔥 ${streak}`));
   } else {
-    right.appendChild(el('div', { class: 'streak zero' }, ['no streak']));
+    right.appendChild(el('div', { class: 'streak zero' }, '—'));
   }
   right.appendChild(el('div', { class: `reset-in ${countdown.cls}` }, countdown.text));
   card.appendChild(right);
@@ -1159,9 +1112,20 @@ function renderGameCard(g) {
 
 function renderEmpty() {
   return el('div', { class: 'empty-state' }, [
-    el('div', { class: 'icon' }, '\u{1F3AE}'),
+    // Things-style empty glyph: a single empty checkbox
+    (() => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'glyph');
+      svg.setAttribute('viewBox', '0 0 56 56');
+      svg.setAttribute('fill', 'none');
+      svg.innerHTML = `
+        <rect x="14" y="14" width="28" height="28" rx="14" stroke="currentColor" stroke-width="2" fill="none"/>
+        <line x1="20" y1="28" x2="36" y2="28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.4"/>
+      `;
+      return svg;
+    })(),
     el('h3', null, 'No games yet'),
-    el('p', null, 'Add the gacha games you play and Daily will track each one\'s daily reset — no more mental math at midnight.'),
+    el('p', null, 'Add the gacha games you play. Each one resets daily at the time you set — no more midnight drift.'),
     el('button', { onclick: () => openModal() }, '+ Add your first game'),
   ]);
 }
@@ -1237,7 +1201,6 @@ document.querySelectorAll('[data-close]').forEach(n => n.addEventListener('click
 document.addEventListener('keydown', (e) => {
   const modal = document.getElementById('modal');
   if (e.key === 'Escape' && !modal.hidden) closeModal();
-  // Cmd/Ctrl-N to add a new game
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n' && modal.hidden) {
     e.preventDefault();
     openModal();
@@ -1277,10 +1240,9 @@ document.querySelectorAll('.nav-item').forEach(btn => {
     render();
   });
 });
-// (Only "Today" view exists now, but the handler stays in case more views are added later.)
 
 /* ============================================================
-   Periodic refresh (countdowns tick over, statuses may flip)
+   Periodic refresh
    ============================================================ */
 let renderTimer = null;
 function scheduleRender() {
@@ -1291,9 +1253,11 @@ function scheduleRender() {
   }, 200);
 }
 setInterval(scheduleRender, 30 * 1000);
-// Also re-render when the tab becomes visible again
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) render();
+  if (!document.hidden) {
+    render();
+    pullFromServer().catch(() => {});
+  }
 });
 
 /* ============================================================
@@ -1331,7 +1295,7 @@ if (codeEl) {
 
 document.getElementById('sync-change').addEventListener('click', () => {
   const incoming = prompt('Paste a sync code from another device.\nLeave blank and OK to generate a new one.\n\nCurrent: ' + getDeviceId());
-  if (incoming === null) return; // cancel
+  if (incoming === null) return;
   const trimmed = incoming.trim();
   if (!trimmed) return;
   if (trimmed === getDeviceId()) return;
@@ -1339,11 +1303,6 @@ document.getElementById('sync-change').addEventListener('click', () => {
   localStorage.setItem(DEVICE_ID_KEY, trimmed);
   refreshSyncCodeDisplay();
   pullFromServer().catch(() => {});
-});
-
-// Pull on tab regain focus so cross-device changes show up when you come back.
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) pullFromServer().catch(() => {});
 });
 </script>
 </body>
