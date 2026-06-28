@@ -105,10 +105,10 @@ async function finishRegistration(req, res, body) {
   }
   if (!verification.verified) return res.status(400).json({ error: 'verification failed' });
 
-  const { credentialInfo } = verification.registrationInfo;
-  const credentialID = credentialInfo.id;
-  const publicKey = credentialInfo.publicKey;
-  const counter = credentialInfo.counter;
+  const regCred = verification.registrationInfo.credential;
+  const credentialID = regCred.id;
+  const publicKey = regCred.publicKey;
+  const counter = regCred.counter;
   const transports = JSON.stringify(credential.response?.transports || []);
 
   await sql`
