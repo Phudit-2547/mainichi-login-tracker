@@ -790,6 +790,7 @@
               </svg>
               Sign in
             </button>
+            <button class="sync-link" id="sync-register-btn" type="button">first time here? create account →</button>
             <div class="sync-signed-out-note">Sync across your devices with a passkey — no codes to copy.</div>
           </div>
           <div id="sync-signed-in" hidden>
@@ -992,17 +993,19 @@ async function checkSession() {
 }
 
 async function signIn() {
-  // Try login first. If no passkey exists for this RP, browser will throw
-  // NotAllowedError — fall back to registration.
+  // Try login first. If no passkey exists for this RP, browser/extension
+  // throws — usually NotAllowedError, but Proton Pass / 1Password / etc.
+  // can wrap it with their own message. Fall back to register on any error
+  // except explicit user cancellation.
   try {
     await loginFlow();
   } catch (loginErr) {
-    const msg = String(loginErr && loginErr.message || loginErr);
-    if (/no credentials|not allowed|notallowed/i.test(msg) || loginErr?.name === 'NotAllowedError') {
-      await registerFlow();
-    } else {
-      throw loginErr;
-    }
+    const name = loginErr?.name || '';
+    const msg = String(loginErr?.message || loginErr || '').toLowerCase();
+    const userCancelled = name === 'AbortError' || /\bcancel/i.test(msg);
+    if (userCancelled) throw loginErr;
+    console.warn('Login failed, falling back to registration:', loginErr);
+    await registerFlow();
   }
   await pullFromServer();
   renderSyncUI();
@@ -1688,6 +1691,28 @@ if (signinBtn) {
       signinBtn.innerHTML = orig;
     } finally {
       signinBtn.disabled = false;
+    }
+  });
+}
+
+// Explicit "create account" — for new users who'd rather not hit the
+// sign-in button and see the fallback error path.
+const registerBtn = document.getElementById('sync-register-btn');
+if (registerBtn) {
+  registerBtn.addEventListener('click', async () => {
+    registerBtn.disabled = true;
+    const orig = registerBtn.textContent;
+    registerBtn.textContent = 'creating account…';
+    try {
+      await registerFlow();
+      await pullFromServer();
+      renderSyncUI();
+    } catch (e) {
+      console.error(e);
+      alert('Registration failed: ' + (e.message || e));
+    } finally {
+      registerBtn.disabled = false;
+      registerBtn.textContent = orig;
     }
   });
 }
