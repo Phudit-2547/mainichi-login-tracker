@@ -15,7 +15,11 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
 
-  await ensureSchema();
+  try {
+    await ensureSchema();
+  } catch (e) {
+    return res.status(500).json({ error: 'schema init failed: ' + (e.message || String(e)) });
+  }
 
   const body = await readJsonBody(req);
   if (!body) return res.status(400).json({ error: 'invalid JSON body' });

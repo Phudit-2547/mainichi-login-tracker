@@ -65,18 +65,16 @@ export function ensureSchema() {
     `;
     // One-time migration: if gacha_data still has the old device_id schema
     // (text PK), rename it to gacha_data_legacy so users can claim their data
-    // via /api/claim.
-    await sql`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'gacha_data' AND column_name = 'device_id'
-        ) THEN
-          ALTER TABLE gacha_data RENAME TO gacha_data_legacy;
-        END IF;
-      END $$;
+    // via /api/claim. Done as separate queries because the @neondatabase/serverless
+    // HTTP driver doesn't reliably support PL/pgSQL DO blocks.
+    const legacyCols = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'gacha_data' AND column_name = 'device_id'
+      LIMIT 1
     `;
+    if (legacyCols.length > 0) {
+      await sql`ALTER TABLE gacha_data RENAME TO gacha_data_legacy`;
+    }
     await sql`
       CREATE TABLE IF NOT EXISTS gacha_data (
         user_id     UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -89,6 +87,7 @@ export function ensureSchema() {
     await sql`DELETE FROM sessions WHERE expires_at < NOW() - INTERVAL '1 day'`;
   })().catch(err => {
     _schemaReady = null; // retry next call
+    console.error('[mainichi] schema bootstrap failed:', err);
     throw err;
   });
   return _schemaReady;

@@ -11,7 +11,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'method not allowed' });
   }
 
-  await ensureSchema();
+  try {
+    await ensureSchema();
+  } catch (e) {
+    return res.status(500).json({ error: 'schema init failed: ' + (e.message || String(e)) });
+  }
 
   const userId = await userFromToken(bearerToken(req));
   if (!userId) return res.status(401).json({ error: 'authentication required' });

@@ -9,7 +9,11 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
 
-  await ensureSchema();
+  try {
+    await ensureSchema();
+  } catch (e) {
+    return res.status(500).json({ error: 'schema init failed: ' + (e.message || String(e)) });
+  }
 
   const token = bearerToken(req);
   const userId = await userFromToken(token);
