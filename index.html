@@ -863,11 +863,44 @@ function load() {
 /* ============================================================
    Sync (Neon Postgres via /api/sync)
    ============================================================ */
+// Memorable device codes — easy to type, remember, and say out loud.
+// ~64 × 64 × 100 = ~400k combinations. Fine for personal multi-device.
+const ADJECTIVES = [
+  'amber','azure','bold','brave','bright','breezy','calm','clever','cozy','crisp',
+  'dapper','daring','dusky','eager','eerie','elfin','fabled','fancy','fierce','fleet',
+  'frosty','gentle','gilded','golden','grand','groovy','happy','hasty','hidden','humble',
+  'icy','jazzy','jolly','jovial','keen','lively','lofty','lucky','lunar','lush',
+  'merry','mighty','misty','modest','mystic','neon','noble','peppy','plush','polite',
+  'proud','quick','quiet','rapid','royal','rusty','shiny','silent','sleek','sly',
+  'snappy','solar','stellar','stormy','sunny','swift','tidy','tiny','valiant','vivid',
+  'witty','young','zealous','zesty',
+];
+const NOUNS = [
+  'tiger','river','meadow','mountain','ocean','forest','valley','cloud','phoenix',
+  'dragon','hawk','eagle','falcon','raven','owl','wolf','bear','lion','fox','rabbit',
+  'deer','otter','panda','koala','dolphin','whale','shark','turtle','frog','beetle',
+  'butterfly','ant','bee','spider','crab','octopus','salmon','trout','comet','star',
+  'planet','galaxy','sun','moon','storm','thunder','rainbow','desert','canyon','glacier',
+  'willow','oak','pine','cedar','jasmine','lavender','rose','tulip','daisy','ember',
+  'frost','mist','shadow','spark','wave','crystal','opal','ruby','sapphire','pearl',
+  'jade','onyx','silver','crimson','violet','scarlet',
+];
+
+function generateDeviceId() {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const num = String(Math.floor(Math.random() * 100)).padStart(2, '0');
+  return `${adj}-${noun}-${num}`;
+}
+
+function isValidDeviceCode(s) {
+  return typeof s === 'string' && /^[a-zA-Z0-9_-]{3,50}$/.test(s);
+}
+
 function getDeviceId() {
   let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {
-    id = (typeof crypto !== 'undefined' && crypto.randomUUID && crypto.randomUUID())
-      || (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10) + '-' + Math.random().toString(36).slice(2, 10));
+    id = generateDeviceId();
     localStorage.setItem(DEVICE_ID_KEY, id);
   }
   return id;
@@ -1508,12 +1541,22 @@ if (codeEl) {
 }
 
 document.getElementById('sync-change').addEventListener('click', () => {
-  const incoming = prompt('Paste a sync code from another device.\nLeave blank and OK to generate a new one.\n\nCurrent: ' + getDeviceId());
+  const suggestion = generateDeviceId();
+  const incoming = prompt(
+    'Paste a sync code from another device to share its data.\n' +
+    'Or accept the suggestion to generate a fresh memorable code for this device.\n\n' +
+    'Current: ' + getDeviceId(),
+    suggestion
+  );
   if (incoming === null) return;
   const trimmed = incoming.trim();
   if (!trimmed) return;
+  if (!isValidDeviceCode(trimmed)) {
+    alert('Sync code should be 3-50 characters: letters, numbers, hyphens, or underscores.');
+    return;
+  }
   if (trimmed === getDeviceId()) return;
-  if (!confirm('Switch to code "' + trimmed.slice(0, 8) + '…"?\n\nYour local data will be replaced with whatever the server has for that code. Press Cancel and export first if you want to keep it.')) return;
+  if (!confirm('Switch to code "' + trimmed + '"?\n\nYour local data will be replaced with whatever the server has for that code. Press Cancel and export first if you want to keep it.')) return;
   localStorage.setItem(DEVICE_ID_KEY, trimmed);
   refreshSyncCodeDisplay();
   pullFromServer().catch(() => {});
