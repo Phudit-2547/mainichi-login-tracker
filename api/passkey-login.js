@@ -8,7 +8,7 @@
 // a signed assertion, server verifies and issues a session.
 
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { cors, db, ensureSchema, readJsonBody, randomChallenge, randomToken, RP_ID, EXPECTED_ORIGIN } from './_lib.js';
+import { cors, db, ensureSchema, readJsonBody, randomChallengeBytes, randomToken, base64url, RP_ID, EXPECTED_ORIGIN } from './_lib.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -32,15 +32,16 @@ export default async function handler(req, res) {
 
 async function beginLogin(res) {
   const sql = db();
-  const challenge = randomChallenge();
+  const challengeBytes = randomChallengeBytes();
+  const challengeStr = base64url(challengeBytes);
   await sql`
     INSERT INTO challenges (challenge, type, expires_at)
-    VALUES (${challenge}, 'login', NOW() + INTERVAL '5 minutes')
+    VALUES (${challengeStr}, 'login', NOW() + INTERVAL '5 minutes')
   `;
 
   const options = await generateAuthenticationOptions({
     rpID: RP_ID,
-    challenge,
+    challenge: challengeBytes,  // v13 expects raw bytes — library encodes once
     userVerification: 'preferred',
     // No allowCredentials — we want discoverable credentials so the browser
     // shows whatever passkeys the user has for this RP across all their devices.

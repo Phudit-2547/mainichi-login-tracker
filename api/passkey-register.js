@@ -7,7 +7,7 @@
 // returning { sessionToken, userId }.
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
-import { cors, db, ensureSchema, readJsonBody, bearerToken, randomChallenge, randomToken, suggestUsername, RP_ID, RP_NAME, EXPECTED_ORIGIN } from './_lib.js';
+import { cors, db, ensureSchema, readJsonBody, bearerToken, randomChallengeBytes, randomToken, base64url, suggestUsername, RP_ID, RP_NAME, EXPECTED_ORIGIN } from './_lib.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -60,10 +60,11 @@ async function beginRegistration(req, res, body) {
     if (rows.length === 0) return res.status(400).json({ error: 'user not found' });
   }
 
-  const challenge = randomChallenge();
+  const challengeBytes = randomChallengeBytes();
+  const challengeStr = base64url(challengeBytes);  // store the final form
   await sql`
     INSERT INTO challenges (challenge, user_id, type, expires_at)
-    VALUES (${challenge}, ${userId}, 'register', NOW() + INTERVAL '5 minutes')
+    VALUES (${challengeStr}, ${userId}, 'register', NOW() + INTERVAL '5 minutes')
   `;
 
   const options = await generateRegistrationOptions({
@@ -71,7 +72,7 @@ async function beginRegistration(req, res, body) {
     rpID: RP_ID,
     userID: new TextEncoder().encode(userId),  // v13 requires Uint8Array, not string
     userName: body.username || suggestUsername(),
-    challenge,
+    challenge: challengeBytes,  // v13 expects raw bytes — library base64url-encodes once
     authenticatorSelection: {
       residentKey: 'required',         // discoverable — survives cross-device
       userVerification: 'preferred',

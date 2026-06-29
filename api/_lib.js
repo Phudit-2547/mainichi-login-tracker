@@ -136,10 +136,10 @@ export async function userFromToken(token) {
 }
 
 // ---- Crypto helpers ----
-export function randomChallenge() {
+export function randomChallengeBytes() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  return base64url(bytes);
+  return bytes;
 }
 
 export function randomToken() {
@@ -148,7 +148,7 @@ export function randomToken() {
   return base64url(bytes);
 }
 
-function base64url(bytes) {
+export function base64url(bytes) {
   return Buffer.from(bytes).toString('base64url');
 }
 
