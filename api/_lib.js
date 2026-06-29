@@ -136,12 +136,7 @@ export async function userFromToken(token) {
 }
 
 // ---- Crypto helpers ----
-export function randomChallengeBytes() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return bytes;
-}
-
+// 32 random bytes, base64url-encoded. Used for session tokens.
 export function randomToken() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

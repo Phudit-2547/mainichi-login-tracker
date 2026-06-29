@@ -1,13 +1,31 @@
-// Passkey registration — two stages:
-//   POST { stage: 'begin' }    → server generates challenge + user_id, returns WebAuthn options
-//   POST { stage: 'finish', credential, user_id } → server verifies, stores credential, creates session
+// Passkey registration — follows the canonical pattern from
+// https://github.com/MasterKale/SimpleWebAuthn/blob/master/example/index.ts
 //
-// The first request creates a row in `users` with a random UUID user_id.
-// The second request stores the credential and creates an active session,
-// returning { sessionToken, userId }.
+// Two stages:
+//   POST { stage: 'begin' }                  → server creates a user + calls
+//                                              generateRegistrationOptions,
+//                                              returns the options
+//   POST { stage: 'finish', credential, userId } → verify, persist credential,
+//                                                  issue session token
+//
+// Cross-device sync works because the user_id (UUID) we generate here is
+// turned into a userHandle by the library and embedded in the passkey.
+// Passkeys synced via iCloud Keychain / Proton Pass / Google Password
+// Manager carry the same userHandle, so the same userId is recovered on
+// every device that authenticates.
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
-import { cors, db, ensureSchema, readJsonBody, bearerToken, randomChallengeBytes, randomToken, base64url, suggestUsername, RP_ID, RP_NAME, EXPECTED_ORIGIN } from './_lib.js';
+import { cors, db, ensureSchema, readJsonBody, randomToken, suggestUsername, RP_ID, RP_NAME, EXPECTED_ORIGIN } from './_lib.js';
+
+// Convert a UUID string to the 16 raw bytes the WebAuthn user handle expects.
+function uuidToBytes(uuid) {
+  const hex = uuid.replace(/-/g, '');
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
 
 export default async function handler(req, res) {
   cors(res);
@@ -24,79 +42,64 @@ export default async function handler(req, res) {
   if (!body) return res.status(400).json({ error: 'invalid JSON body' });
 
   const { stage } = body;
-
-  if (stage === 'begin') {
-    return await beginRegistration(req, res, body);
-  }
-  if (stage === 'finish') {
-    return await finishRegistration(req, res, body);
-  }
+  if (stage === 'begin') return await beginRegistration(req, res, body);
+  if (stage === 'finish') return await finishRegistration(req, res, body);
   return res.status(400).json({ error: 'invalid stage' });
 }
 
 async function beginRegistration(req, res, body) {
   const sql = db();
 
-  // If a session is already attached, we're adding a new device to an existing
-  // user. Otherwise create a fresh user.
-  let userId = body.userId || null;
-  const existingToken = bearerToken(req);
-  if (!userId && existingToken) {
-    // Try to use the session's user — but for new-passkey registration we
-    // still need a fresh user row. Allow only if user explicitly sends userId.
-  }
+  // Fresh identity per registration. This UUID is the user's permanent ID
+  // in our DB and is what gets baked into the passkey as the userHandle.
+  const userId = crypto.randomUUID();
+  const userIdBytes = uuidToBytes(userId);
 
-  if (!userId) {
-    // Create a new user with a UUID and the supplied username (or auto-gen).
-    userId = crypto.randomUUID();
-    const supplied = body.username && String(body.username).trim();
-    const username = (supplied && supplied.length >= 3 && supplied.length <= 30)
-      ? supplied
-      : suggestUsername();
-    await sql`INSERT INTO users (id, username) VALUES (${userId}, ${username})`;
-  } else {
-    // Verify the user exists
-    const rows = await sql`SELECT 1 FROM users WHERE id = ${userId}`;
-    if (rows.length === 0) return res.status(400).json({ error: 'user not found' });
-  }
+  const supplied = body.username && String(body.username).trim();
+  const username = (supplied && supplied.length >= 3 && supplied.length <= 30)
+    ? supplied
+    : suggestUsername();
 
-  const challengeBytes = randomChallengeBytes();
-  const challengeStr = base64url(challengeBytes);  // store the final form
-  await sql`
-    INSERT INTO challenges (challenge, user_id, type, expires_at)
-    VALUES (${challengeStr}, ${userId}, 'register', NOW() + INTERVAL '5 minutes')
-  `;
+  // Create the user row up front so the credential FK will resolve.
+  await sql`INSERT INTO users (id, username) VALUES (${userId}, ${username})`;
 
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: RP_ID,
-    userID: new TextEncoder().encode(userId),  // v13 requires Uint8Array, not string
-    userName: body.username || suggestUsername(),
-    challenge: challengeBytes,  // v13 expects raw bytes — library base64url-encodes once
+    userID: userIdBytes,
+    userName: username,
     authenticatorSelection: {
-      residentKey: 'required',         // discoverable — survives cross-device
+      residentKey: 'required',  // discoverable — survives cross-device sync
       userVerification: 'preferred',
     },
-    // Don't restrict to platform authenticators — iCloud Keychain, Google
-    // Password Manager, 1Password, etc. all qualify.
   });
+
+  // Persist the library-generated challenge (already base64url-encoded).
+  await sql`
+    INSERT INTO challenges (challenge, user_id, type, expires_at)
+    VALUES (${options.challenge}, ${userId}, 'register', NOW() + INTERVAL '5 minutes')
+  `;
 
   return res.status(200).json({ options, userId });
 }
 
 async function finishRegistration(req, res, body) {
   const { credential, userId } = body;
-  if (!credential || !userId) return res.status(400).json({ error: 'credential and userId required' });
+  if (!credential || !userId) {
+    return res.status(400).json({ error: 'credential and userId required' });
+  }
 
   const sql = db();
 
-  // Pull the most recent unexpired challenge for this user
+  // Pull the most recent unexpired register challenge for this user.
   const challengeRows = await sql`
     SELECT challenge FROM challenges
     WHERE user_id = ${userId} AND type = 'register' AND expires_at > NOW()
     ORDER BY created_at DESC LIMIT 1
   `;
-  if (challengeRows.length === 0) return res.status(400).json({ error: 'challenge expired or not found' });
+  if (challengeRows.length === 0) {
+    return res.status(400).json({ error: 'challenge expired or not found' });
+  }
   const expectedChallenge = challengeRows[0].challenge;
 
   let verification;
@@ -111,11 +114,14 @@ async function finishRegistration(req, res, body) {
   } catch (e) {
     return res.status(400).json({ error: 'verification failed: ' + (e.message || String(e)) });
   }
-  if (!verification.verified) return res.status(400).json({ error: 'verification failed' });
+
+  if (!verification.verified || !verification.registrationInfo) {
+    return res.status(400).json({ error: 'verification failed' });
+  }
 
   const regCred = verification.registrationInfo.credential;
-  const credentialID = regCred.id;
-  const publicKey = regCred.publicKey;
+  const credentialID = regCred.id;          // base64url string
+  const publicKey = regCred.publicKey;       // Uint8Array
   const counter = regCred.counter;
   const transports = JSON.stringify(credential.response?.transports || []);
 
@@ -130,10 +136,8 @@ async function finishRegistration(req, res, body) {
           last_used_at = NOW()
   `;
 
-  // Clean up challenges for this user
   await sql`DELETE FROM challenges WHERE user_id = ${userId} AND type = 'register'`;
 
-  // Issue session
   const sessionToken = randomToken();
   await sql`
     INSERT INTO sessions (token, user_id, expires_at)

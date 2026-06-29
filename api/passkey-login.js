@@ -1,14 +1,17 @@
-// Passkey login — discoverable credentials (no username required).
-//   POST { stage: 'begin' }   → challenge + WebAuthn options
-//   POST { stage: 'finish', credential } → verify, create session
+// Passkey authentication — discoverable credentials (no username required).
+// Follows https://github.com/MasterKale/SimpleWebAuthn/blob/master/example/index.ts
 //
-// The browser, on the begin stage, will surface any discoverable passkey the
-// user has stored for this RP (typically synced via iCloud Keychain or
-// Google Password Manager). The user picks one + biometric, browser returns
-// a signed assertion, server verifies and issues a session.
+// Two stages:
+//   POST { stage: 'begin' }             → challenge + WebAuthn options
+//   POST { stage: 'finish', credential } → verify, issue session
+//
+// Browser surfaces whatever passkeys the user has stored for this RP
+// (typically synced via iCloud Keychain / Google Password Manager /
+// Proton Pass). User picks + biometric, browser signs the challenge,
+// we verify and look up the user via credential.id.
 
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { cors, db, ensureSchema, readJsonBody, randomChallengeBytes, randomToken, base64url, RP_ID, EXPECTED_ORIGIN } from './_lib.js';
+import { cors, db, ensureSchema, readJsonBody, randomToken, RP_ID, EXPECTED_ORIGIN } from './_lib.js';
 
 export default async function handler(req, res) {
   cors(res);
@@ -32,42 +35,46 @@ export default async function handler(req, res) {
 
 async function beginLogin(res) {
   const sql = db();
-  const challengeBytes = randomChallengeBytes();
-  const challengeStr = base64url(challengeBytes);
-  await sql`
-    INSERT INTO challenges (challenge, type, expires_at)
-    VALUES (${challengeStr}, 'login', NOW() + INTERVAL '5 minutes')
-  `;
 
+  // No allowCredentials → discoverable credentials. The browser shows
+  // whatever passkeys the user has for this RP across all their devices.
   const options = await generateAuthenticationOptions({
     rpID: RP_ID,
-    challenge: challengeBytes,  // v13 expects raw bytes — library encodes once
     userVerification: 'preferred',
-    // No allowCredentials — we want discoverable credentials so the browser
-    // shows whatever passkeys the user has for this RP across all their devices.
   });
+
+  await sql`
+    INSERT INTO challenges (challenge, type, expires_at)
+    VALUES (${options.challenge}, 'login', NOW() + INTERVAL '5 minutes')
+  `;
 
   return res.status(200).json({ options });
 }
 
 async function finishLogin(req, res, body) {
   const { credential } = body;
-  if (!credential || !credential.id) return res.status(400).json({ error: 'credential required' });
+  if (!credential || !credential.id) {
+    return res.status(400).json({ error: 'credential required' });
+  }
 
   const sql = db();
 
-  // Look up the credential
+  // Look up the stored credential by its base64url ID.
   const credRows = await sql`SELECT * FROM credentials WHERE id = ${credential.id}`;
-  if (credRows.length === 0) return res.status(400).json({ error: 'credential not found' });
+  if (credRows.length === 0) {
+    return res.status(400).json({ error: 'credential not found' });
+  }
   const stored = credRows[0];
 
-  // Pull the most recent unexpired login challenge
+  // Pull the most recent unexpired login challenge.
   const challengeRows = await sql`
     SELECT challenge FROM challenges
     WHERE type = 'login' AND expires_at > NOW()
     ORDER BY created_at DESC LIMIT 1
   `;
-  if (challengeRows.length === 0) return res.status(400).json({ error: 'challenge expired' });
+  if (challengeRows.length === 0) {
+    return res.status(400).json({ error: 'challenge expired' });
+  }
   const expectedChallenge = challengeRows[0].challenge;
 
   let verification;
@@ -87,9 +94,12 @@ async function finishLogin(req, res, body) {
   } catch (e) {
     return res.status(400).json({ error: 'verification failed: ' + (e.message || String(e)) });
   }
-  if (!verification.verified) return res.status(400).json({ error: 'verification failed' });
 
-  // Update sign count to detect cloned authenticators
+  if (!verification.verified) {
+    return res.status(400).json({ error: 'verification failed' });
+  }
+
+  // Update the counter to detect cloned authenticators.
   await sql`
     UPDATE credentials
     SET sign_count = ${verification.authenticationInfo.newCounter},
@@ -97,10 +107,10 @@ async function finishLogin(req, res, body) {
     WHERE id = ${stored.id}
   `;
 
-  // Clean up this challenge
+  // Consume the challenge so it can't be replayed.
   await sql`DELETE FROM challenges WHERE challenge = ${expectedChallenge}`;
 
-  // Issue session
+  // Issue a session token.
   const sessionToken = randomToken();
   await sql`
     INSERT INTO sessions (token, user_id, expires_at)
