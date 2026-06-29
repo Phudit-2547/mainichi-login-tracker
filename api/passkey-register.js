@@ -47,9 +47,12 @@ async function beginRegistration(req, res, body) {
   }
 
   if (!userId) {
-    // Create a new user with a UUID and a suggested username.
+    // Create a new user with a UUID and the supplied username (or auto-gen).
     userId = crypto.randomUUID();
-    const username = body.username || suggestUsername();
+    const supplied = body.username && String(body.username).trim();
+    const username = (supplied && supplied.length >= 3 && supplied.length <= 30)
+      ? supplied
+      : suggestUsername();
     await sql`INSERT INTO users (id, username) VALUES (${userId}, ${username})`;
   } else {
     // Verify the user exists

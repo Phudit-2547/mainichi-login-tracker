@@ -293,6 +293,25 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .sync-username-input {
+    width: 100%;
+    padding: 6px 9px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--bg);
+    font-size: 12.5px;
+    color: var(--text);
+    margin-bottom: 6px;
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .sync-username-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--card);
+  }
+  .sync-username-input::placeholder {
+    color: var(--text-faint);
+  }
   .sync-link {
     font-size: 11px;
     color: var(--accent);
@@ -783,6 +802,7 @@
       <div class="sidebar-bottom">
         <div class="sync-card">
           <div id="sync-signed-out" class="sync-signed-out">
+            <input type="text" id="sync-username-input" class="sync-username-input" placeholder="your username (optional)" maxlength="30" autocomplete="off" spellcheck="false">
             <button class="sync-signin-btn" id="sync-signin-btn" type="button">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 1.5c-2.5 0-4.5 2-4.5 4.5v2.2c0 .9-.4 1.7-1 2.3l-.7.7c-.3.3-.3.8 0 1.1l.7.7c.6.6 1 1.4 1 2.3v.2c0 .3.2.5.5.5h8c.3 0 .5-.2.5-.5v-.2c0-.9.4-1.7 1-2.3l.7-.7c.3-.3.3-.8 0-1.1l-.7-.7c-.6-.6-1-1.4-1-2.3V6c0-2.5-2-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none"/>
@@ -799,6 +819,7 @@
               <span class="sync-status" id="sync-status">signed in</span>
             </div>
             <div class="sync-username" id="sync-username"></div>
+            <button class="sync-link" id="sync-change-username" type="button">change username</button>
             <button class="sync-link" id="sync-signout" type="button">sign out</button>
           </div>
           <div class="sync-claim" id="sync-claim" hidden>
@@ -1040,11 +1061,15 @@ async function loginFlow() {
   await checkSession();
 }
 
-async function registerFlow() {
+async function registerFlow(usernameOverride) {
+  const username = usernameOverride !== undefined
+    ? usernameOverride
+    : (document.getElementById('sync-username-input')?.value || '').trim();
+
   const beginRes = await fetch('/api/passkey-register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage: 'begin' }),
+    body: JSON.stringify({ stage: 'begin', username }),
   });
   if (!beginRes.ok) {
     const err = await beginRes.json().catch(() => ({}));
@@ -1729,6 +1754,39 @@ if (signoutBtn) {
   signoutBtn.addEventListener('click', () => {
     if (confirm('Sign out? Your data stays on this device but stops syncing until you sign in again.')) {
       signOut();
+    }
+  });
+}
+
+// Change username (when signed in)
+const changeUsernameBtn = document.getElementById('sync-change-username');
+if (changeUsernameBtn) {
+  changeUsernameBtn.addEventListener('click', async () => {
+    const current = signedInUser?.username || '';
+    const next = prompt('New username (3-30 characters):', current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === current) return;
+    changeUsernameBtn.disabled = true;
+    const orig = changeUsernameBtn.textContent;
+    changeUsernameBtn.textContent = 'saving…';
+    try {
+      const res = await fetch('/api/username', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sessionToken },
+        body: JSON.stringify({ username: trimmed }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      await checkSession();
+      renderSyncUI();
+    } catch (e) {
+      alert('Could not change username: ' + (e.message || e));
+    } finally {
+      changeUsernameBtn.disabled = false;
+      changeUsernameBtn.textContent = orig;
     }
   });
 }
