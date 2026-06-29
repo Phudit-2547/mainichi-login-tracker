@@ -1017,7 +1017,10 @@ async function loginFlow() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stage: 'begin' }),
   });
-  if (!beginRes.ok) throw new Error('login begin failed: HTTP ' + beginRes.status);
+  if (!beginRes.ok) {
+    const err = await beginRes.json().catch(() => ({}));
+    throw new Error(err.error || ('login begin failed: HTTP ' + beginRes.status));
+  }
   const { options } = await beginRes.json();
 
   const credential = await swa().startAuthentication(options);
@@ -1029,7 +1032,7 @@ async function loginFlow() {
   });
   if (!finishRes.ok) {
     const err = await finishRes.json().catch(() => ({}));
-    throw new Error(err.error || 'login failed: HTTP ' + finishRes.status);
+    throw new Error(err.error || ('login failed: HTTP ' + finishRes.status));
   }
   const { sessionToken: token } = await finishRes.json();
   sessionToken = token;
@@ -1043,7 +1046,10 @@ async function registerFlow() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stage: 'begin' }),
   });
-  if (!beginRes.ok) throw new Error('register begin failed: HTTP ' + beginRes.status);
+  if (!beginRes.ok) {
+    const err = await beginRes.json().catch(() => ({}));
+    throw new Error(err.error || ('register begin failed: HTTP ' + beginRes.status));
+  }
   const { options, userId } = await beginRes.json();
 
   const credential = await swa().startRegistration(options);
@@ -1055,7 +1061,7 @@ async function registerFlow() {
   });
   if (!finishRes.ok) {
     const err = await finishRes.json().catch(() => ({}));
-    throw new Error(err.error || 'registration failed: HTTP ' + finishRes.status);
+    throw new Error(err.error || ('registration failed: HTTP ' + finishRes.status));
   }
   const { sessionToken: token } = await finishRes.json();
   sessionToken = token;
