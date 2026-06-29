@@ -66,7 +66,7 @@ async function beginRegistration(req, res, body) {
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: RP_ID,
-    userID: userId,
+    userID: new TextEncoder().encode(userId),  // v13 requires Uint8Array, not string
     userName: body.username || suggestUsername(),
     challenge,
     authenticatorSelection: {
