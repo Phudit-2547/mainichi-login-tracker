@@ -1014,19 +1014,18 @@ async function checkSession() {
 }
 
 async function signIn() {
-  // Try login first. If no passkey exists for this RP, browser/extension
-  // throws — usually NotAllowedError, but Proton Pass / 1Password / etc.
-  // can wrap it with their own message. Fall back to register on any error
-  // except explicit user cancellation.
+  // Login ONLY. No auto-fallback to registration — if you don't have a
+  // passkey yet, click "first time here? create account" explicitly.
+  console.log('[mainichi] signIn: requesting login options');
   try {
     await loginFlow();
+    console.log('[mainichi] signIn: login succeeded');
   } catch (loginErr) {
     const name = loginErr?.name || '';
-    const msg = String(loginErr?.message || loginErr || '').toLowerCase();
-    const userCancelled = name === 'AbortError' || /\bcancel/i.test(msg);
-    if (userCancelled) throw loginErr;
-    console.warn('Login failed, falling back to registration:', loginErr);
-    await registerFlow();
+    const msg = String(loginErr?.message || loginErr || '');
+    console.warn('[mainichi] signIn: login failed', { name, message: msg, err: loginErr });
+    // Re-throw so the click handler can show a useful alert.
+    throw loginErr;
   }
   await pullFromServer();
   renderSyncUI();
@@ -1717,8 +1716,21 @@ if (signinBtn) {
     try {
       await signIn();
     } catch (e) {
-      console.error(e);
-      alert('Sign-in failed: ' + (e.message || e));
+      console.error('[mainichi] sign-in failed', e);
+      const name = e?.name || '';
+      const msg = String(e?.message || e);
+      // Friendly error copy. The browser usually surfaces "no passkey" when
+      // the user has no discoverable credential for this RP; otherwise we
+      // dump the raw error.
+      let hint;
+      if (name === 'AbortError' || /cancel/i.test(msg)) {
+        hint = 'Sign-in cancelled.';
+      } else if (/no passkey|no credential|not ?found/i.test(msg)) {
+        hint = 'No passkey found for this site in your password manager.\n\nIf you already have one, make sure you\'re using the same browser/profile where it was saved. Otherwise, click "first time here? create account" below.';
+      } else {
+        hint = 'Sign-in failed: ' + msg + '\n\nOpen the browser console (F12) for the full error.';
+      }
+      alert(hint);
       signinBtn.innerHTML = orig;
     } finally {
       signinBtn.disabled = false;
