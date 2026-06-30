@@ -1,47 +1,102 @@
-// Data sync — requires an authenticated session.
-//   GET  /api/sync                  → { payload, updated_at } | { payload: null }
-//   POST /api/sync  { payload }     → { ok: true }
+// Sync — pick your own code, copy it across devices.
+//   GET  /api/sync?device_id=86eki          → { payload, updated_at } | { payload: null }
+//   POST /api/sync  { device_id, payload }   → { ok: true }
+//
+// Anyone who knows the device_id can read/write that row. No auth — this
+// is a personal app, the device_id IS the shared secret. Don't pick
+// something guessable if your Neon DB is public.
 
-import { cors, db, ensureSchema, readJsonBody, bearerToken, userFromToken } from './_lib.js';
+import { neon } from '@neondatabase/serverless';
+
+const sql = neon(process.env.DATABASE_URL);
+
+let _schemaReady = null;
+async function ensureSchema() {
+  if (_schemaReady) return _schemaReady;
+  _schemaReady = (async () => {
+    // If a previous deploy left gacha_data in the passkey shape (user_id
+    // UUID), park it as a legacy table so the column shape can change.
+    const cols = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'gacha_data' AND column_name = 'user_id'
+      LIMIT 1
+    `;
+    if (cols.length > 0) {
+      await sql`ALTER TABLE gacha_data RENAME TO gacha_data_passkey_legacy`;
+    }
+    await sql`
+      CREATE TABLE IF NOT EXISTS gacha_data (
+        device_id  TEXT PRIMARY KEY,
+        payload    JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+  })().catch(err => {
+    _schemaReady = null;
+    throw err;
+  });
+  return _schemaReady;
+}
+
+function isValidCode(s) {
+  return typeof s === 'string' && s.length >= 3 && s.length <= 50 && /^[a-zA-Z0-9_\- ]+$/.test(s);
+}
+
+async function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object') return req.body;
+  if (typeof req.body === 'string' && req.body) {
+    try { return JSON.parse(req.body); } catch { return null; }
+  }
+  return {};
+}
 
 export default async function handler(req, res) {
-  cors(res);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    return res.status(405).json({ error: 'method not allowed' });
-  }
 
   try {
     await ensureSchema();
   } catch (e) {
-    return res.status(500).json({ error: 'schema init failed: ' + (e.message || String(e)) });
+    return res.status(500).json({ error: 'schema init failed: ' + e.message });
   }
 
-  const userId = await userFromToken(bearerToken(req));
-  if (!userId) return res.status(401).json({ error: 'authentication required' });
+  // Extract device_id from query (GET) or body (POST)
+  let deviceId;
+  if (req.method === 'GET') {
+    deviceId = req.query?.device_id;
+  } else {
+    const body = await readJsonBody(req);
+    deviceId = body?.device_id;
+  }
 
-  const sql = db();
+  if (!isValidCode(deviceId)) {
+    return res.status(400).json({
+      error: 'device_id required (3-50 chars: letters, numbers, spaces, hyphens, underscores)',
+    });
+  }
 
   if (req.method === 'GET') {
     const rows = await sql`
-      SELECT payload, updated_at FROM gacha_data WHERE user_id = ${userId}
+      SELECT payload, updated_at FROM gacha_data WHERE device_id = ${deviceId}
     `;
     if (rows.length === 0) return res.status(200).json({ payload: null, updated_at: null });
     return res.status(200).json({ payload: rows[0].payload, updated_at: rows[0].updated_at });
   }
 
-  // POST
-  const body = await readJsonBody(req);
-  if (!body) return res.status(400).json({ error: 'invalid JSON body' });
-  const { payload } = body;
-  if (payload === undefined) return res.status(400).json({ error: 'payload required' });
+  if (req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const { payload } = body;
+    if (payload === undefined) return res.status(400).json({ error: 'payload required' });
+    await sql`
+      INSERT INTO gacha_data (device_id, payload, updated_at)
+      VALUES (${deviceId}, ${JSON.stringify(payload)}::jsonb, NOW())
+      ON CONFLICT (device_id) DO UPDATE
+        SET payload = EXCLUDED.payload, updated_at = NOW()
+    `;
+    return res.status(200).json({ ok: true });
+  }
 
-  await sql`
-    INSERT INTO gacha_data (user_id, payload, updated_at)
-    VALUES (${userId}, ${JSON.stringify(payload)}::jsonb, NOW())
-    ON CONFLICT (user_id) DO UPDATE
-      SET payload = EXCLUDED.payload,
-          updated_at = NOW()
-  `;
-  return res.status(200).json({ ok: true });
+  return res.status(405).json({ error: 'method not allowed' });
 }

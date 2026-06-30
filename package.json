@@ -2,9 +2,7 @@
   "name": "gacha-tracker",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "dependencies": {
-    "@neondatabase/serverless": "^0.9.4",
-    "@simplewebauthn/server": "^13.3.2"
+    "@neondatabase/serverless": "^0.9.4"
   }
 }

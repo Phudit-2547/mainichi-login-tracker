@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Mainichi — Gacha Login Tracker</title>
-<script src="https://unpkg.com/@simplewebauthn/browser@13.3.0/dist/bundle/index.umd.min.js" defer></script>
 <style>
   /* ==================================================
      Design tokens — Things 3 inspired
@@ -259,7 +258,7 @@
     flex-direction: column;
     gap: 8px;
   }
-  /* Sync card — passkey sign-in / signed-in states */
+  /* Sync card — custom sync code model */
   .sync-card {
     font-size: 11.5px;
     color: var(--text-muted);
@@ -284,16 +283,8 @@
     50% { opacity: 0.35; }
   }
   .sync-status { font-weight: 500; color: var(--text-secondary); }
-  .sync-username {
-    margin-top: 4px;
-    color: var(--text);
-    font-weight: 500;
-    font-size: 12.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .sync-username-input {
+
+  .sync-code-input {
     width: 100%;
     padding: 6px 9px;
     border: 1px solid var(--border-strong);
@@ -301,16 +292,44 @@
     background: var(--bg);
     font-size: 12.5px;
     color: var(--text);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
     transition: border-color var(--transition), background var(--transition);
   }
-  .sync-username-input:focus {
+  .sync-code-input:focus {
     outline: none;
     border-color: var(--accent);
     background: var(--card);
   }
-  .sync-username-input::placeholder {
+  .sync-code-input::placeholder { color: var(--text-faint); }
+
+  .sync-code {
+    margin-top: 4px;
+    padding: 5px 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: all;
+    word-break: break-all;
+    transition: border-color var(--transition), color var(--transition);
+  }
+  .sync-code:hover { border-color: var(--accent); }
+  .sync-code.copied { border-color: var(--success); color: var(--success); }
+
+  .sync-note {
+    font-size: 11px;
     color: var(--text-faint);
+    line-height: 1.4;
+    margin-top: 4px;
+  }
+  .sync-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    margin-top: 6px;
   }
   .sync-link {
     font-size: 11px;
@@ -318,57 +337,11 @@
     background: none;
     border: none;
     cursor: pointer;
-    padding: 4px 0 0;
+    padding: 2px 0;
     text-align: left;
   }
   .sync-link:hover { text-decoration: underline; }
   .sync-link.muted { color: var(--text-muted); }
-
-  .sync-signin-btn {
-    width: 100%;
-    padding: 7px 10px;
-    border-radius: 5px;
-    background: var(--card);
-    color: var(--text);
-    border: 1px solid var(--border-strong);
-    font-weight: 500;
-    font-size: 12.5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    transition: background var(--transition), border-color var(--transition);
-  }
-  .sync-signin-btn:hover { background: var(--row-hover); border-color: var(--text-faint); }
-  .sync-signin-btn svg { flex-shrink: 0; }
-  .sync-signin-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-
-  .sync-signed-out {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .sync-signed-out-note {
-    font-size: 11px;
-    color: var(--text-faint);
-    line-height: 1.4;
-  }
-  .sync-claim {
-    margin-top: 8px;
-    padding: 8px 10px;
-    border-radius: 5px;
-    background: var(--accent-soft);
-    color: var(--text);
-  }
-  .sync-claim-text {
-    font-size: 11.5px;
-    line-height: 1.4;
-  }
-  .sync-claim-text strong {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
 
   .add-btn {
     width: 100%;
@@ -801,32 +774,22 @@
       </nav>
       <div class="sidebar-bottom">
         <div class="sync-card">
-          <div id="sync-signed-out" class="sync-signed-out">
-            <input type="text" id="sync-username-input" class="sync-username-input" placeholder="your username (optional)" maxlength="30" autocomplete="off" spellcheck="false">
-            <button class="sync-signin-btn" id="sync-signin-btn" type="button">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 1.5c-2.5 0-4.5 2-4.5 4.5v2.2c0 .9-.4 1.7-1 2.3l-.7.7c-.3.3-.3.8 0 1.1l.7.7c.6.6 1 1.4 1 2.3v.2c0 .3.2.5.5.5h8c.3 0 .5-.2.5-.5v-.2c0-.9.4-1.7 1-2.3l.7-.7c.3-.3.3-.8 0-1.1l-.7-.7c-.6-.6-1-1.4-1-2.3V6c0-2.5-2-4.5-4.5-4.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" fill="none"/>
-                <path d="M5.5 14.5h5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-              </svg>
-              Sign in
-            </button>
-            <button class="sync-link" id="sync-register-btn" type="button">first time here? create account →</button>
-            <div class="sync-signed-out-note">Sync across your devices with a passkey — no codes to copy.</div>
+          <div id="sync-not-set">
+            <input type="text" id="sync-code-input" class="sync-code-input" placeholder="type a sync code" maxlength="50" autocomplete="off" spellcheck="false">
+            <button class="sync-link" id="sync-set-btn" type="button">use this code</button>
+            <div class="sync-note">Pick any word or phrase. Copy it to your other devices to share data.</div>
           </div>
-          <div id="sync-signed-in" hidden>
+          <div id="sync-set" hidden>
             <div class="sync-row">
               <span class="sync-dot" id="sync-dot"></span>
-              <span class="sync-status" id="sync-status">signed in</span>
+              <span class="sync-status" id="sync-status">local</span>
             </div>
-            <div class="sync-username" id="sync-username"></div>
-            <button class="sync-link" id="sync-change-username" type="button">change username</button>
-            <button class="sync-link" id="sync-signout" type="button">sign out</button>
-          </div>
-          <div class="sync-claim" id="sync-claim" hidden>
-            <div class="sync-claim-text">
-              Found data on your old sync code <strong id="legacy-code"></strong>. Claim it?
+            <div class="sync-code" id="sync-code" title="Click to copy" tabindex="0"></div>
+            <div class="sync-actions">
+              <button class="sync-link" id="sync-copy" type="button">copy</button>
+              <button class="sync-link" id="sync-change" type="button">change code</button>
+              <button class="sync-link" id="sync-forget" type="button">forget on this device</button>
             </div>
-            <button class="sync-link" id="sync-claim-btn" type="button">claim data →</button>
           </div>
         </div>
         <button class="add-btn" id="add-btn">+ Add Game</button>
@@ -880,8 +843,7 @@
    Constants
    ============================================================ */
 const STORAGE_KEY = 'gacha-tracker-v1';
-const SESSION_KEY = 'gacha-session-token-v2';
-const LEGACY_KEY = 'gacha-legacy-code';
+const SYNC_CODE_KEY = 'gacha-sync-code-v3';
 
 const COLORS = [
   '#BAE1FF', // blue
@@ -943,171 +905,56 @@ function load() {
 }
 
 /* ============================================================
-   Sync (Neon Postgres via /api/sync — passkey auth)
+   Sync — custom sync code (user picks the code, copy across devices)
    ============================================================ */
-let sessionToken = localStorage.getItem(SESSION_KEY) || null;
-let signedInUser = null; // { userId, username, credentialCount }
+let syncCode = localStorage.getItem(SYNC_CODE_KEY) || null;
 let syncState = 'idle';   // idle | syncing | synced | offline
 let syncTimer = null;
-
-const swa = () => window.SimpleWebAuthnBrowser;
 
 function setSyncDot(state) {
   syncState = state;
   const dot = document.getElementById('sync-dot');
   if (dot) dot.className = 'sync-dot ' + state;
   const status = document.getElementById('sync-status');
-  if (status) status.textContent = state === 'syncing' ? 'syncing…' : (state === 'synced' ? 'synced' : state);
+  if (status) status.textContent = state === 'syncing' ? 'syncing…' : (state === 'synced' ? 'synced' : 'local');
+}
+
+function isValidSyncCode(s) {
+  return typeof s === 'string' && s.length >= 3 && s.length <= 50 && /^[a-zA-Z0-9_\- ]+$/.test(s);
 }
 
 function renderSyncUI() {
-  const outEl = document.getElementById('sync-signed-out');
-  const inEl = document.getElementById('sync-signed-in');
-  const usernameEl = document.getElementById('sync-username');
-  if (signedInUser) {
-    outEl.hidden = true;
-    inEl.hidden = false;
-    usernameEl.textContent = signedInUser.username || 'me';
+  const notSet = document.getElementById('sync-not-set');
+  const setEl = document.getElementById('sync-set');
+  const codeEl = document.getElementById('sync-code');
+  if (syncCode) {
+    notSet.hidden = true;
+    setEl.hidden = false;
+    codeEl.textContent = syncCode;
   } else {
-    outEl.hidden = false;
-    inEl.hidden = true;
+    notSet.hidden = false;
+    setEl.hidden = true;
   }
-  // Legacy claim
-  const legacy = localStorage.getItem(LEGACY_KEY);
-  const claimEl = document.getElementById('sync-claim');
-  if (signedInUser && legacy) {
-    document.getElementById('legacy-code').textContent = legacy;
-    claimEl.hidden = false;
+}
+
+function setSyncCode(newCode, options = {}) {
+  syncCode = newCode;
+  if (newCode) {
+    localStorage.setItem(SYNC_CODE_KEY, newCode);
   } else {
-    claimEl.hidden = true;
-  }
-}
-
-async function checkSession() {
-  if (!sessionToken) {
-    signedInUser = null;
-    renderSyncUI();
-    return;
-  }
-  try {
-    const res = await fetch('/api/me', {
-      headers: { Authorization: 'Bearer ' + sessionToken },
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      sessionToken = null;
-      localStorage.removeItem(SESSION_KEY);
-      signedInUser = null;
-    } else {
-      signedInUser = await res.json();
-      if (!signedInUser.signedIn) {
-        sessionToken = null;
-        localStorage.removeItem(SESSION_KEY);
-        signedInUser = null;
-      }
-    }
-  } catch (e) {
-    // Network error — keep token, just show as not signed in
-    signedInUser = null;
+    localStorage.removeItem(SYNC_CODE_KEY);
   }
   renderSyncUI();
-}
-
-async function signIn() {
-  // Login ONLY. No auto-fallback to registration — if you don't have a
-  // passkey yet, click "first time here? create account" explicitly.
-  console.log('[mainichi] signIn: requesting login options');
-  try {
-    await loginFlow();
-    console.log('[mainichi] signIn: login succeeded');
-  } catch (loginErr) {
-    const name = loginErr?.name || '';
-    const msg = String(loginErr?.message || loginErr || '');
-    console.warn('[mainichi] signIn: login failed', { name, message: msg, err: loginErr });
-    // Re-throw so the click handler can show a useful alert.
-    throw loginErr;
+  if (options.pull !== false && newCode) {
+    pullFromServer();
   }
-  await pullFromServer();
-  renderSyncUI();
-}
-
-async function loginFlow() {
-  const beginRes = await fetch('/api/passkey-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage: 'begin' }),
-  });
-  if (!beginRes.ok) {
-    const err = await beginRes.json().catch(() => ({}));
-    throw new Error(err.error || ('login begin failed: HTTP ' + beginRes.status));
-  }
-  const { options } = await beginRes.json();
-
-  const credential = await swa().startAuthentication(options);
-
-  const finishRes = await fetch('/api/passkey-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage: 'finish', credential }),
-  });
-  if (!finishRes.ok) {
-    const err = await finishRes.json().catch(() => ({}));
-    throw new Error(err.error || ('login failed: HTTP ' + finishRes.status));
-  }
-  const { sessionToken: token } = await finishRes.json();
-  sessionToken = token;
-  localStorage.setItem(SESSION_KEY, sessionToken);
-  await checkSession();
-}
-
-async function registerFlow(usernameOverride) {
-  const username = usernameOverride !== undefined
-    ? usernameOverride
-    : (document.getElementById('sync-username-input')?.value || '').trim();
-
-  const beginRes = await fetch('/api/passkey-register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage: 'begin', username }),
-  });
-  if (!beginRes.ok) {
-    const err = await beginRes.json().catch(() => ({}));
-    throw new Error(err.error || ('register begin failed: HTTP ' + beginRes.status));
-  }
-  const { options, userId } = await beginRes.json();
-
-  const credential = await swa().startRegistration(options);
-
-  const finishRes = await fetch('/api/passkey-register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage: 'finish', credential, userId }),
-  });
-  if (!finishRes.ok) {
-    const err = await finishRes.json().catch(() => ({}));
-    throw new Error(err.error || ('registration failed: HTTP ' + finishRes.status));
-  }
-  const { sessionToken: token } = await finishRes.json();
-  sessionToken = token;
-  localStorage.setItem(SESSION_KEY, sessionToken);
-  await checkSession();
-}
-
-function signOut() {
-  sessionToken = null;
-  signedInUser = null;
-  localStorage.removeItem(SESSION_KEY);
-  renderSyncUI();
 }
 
 async function pullFromServer() {
-  if (!sessionToken) return;
+  if (!syncCode) return;
   setSyncDot('syncing');
   try {
-    const res = await fetch('/api/sync', {
-      headers: { Authorization: 'Bearer ' + sessionToken },
-      cache: 'no-store',
-    });
+    const res = await fetch('/api/sync?device_id=' + encodeURIComponent(syncCode), { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const { payload } = await res.json();
     if (payload && Array.isArray(payload.games)) {
@@ -1124,13 +971,13 @@ async function pullFromServer() {
 }
 
 async function pushToServer() {
-  if (!sessionToken) return;
+  if (!syncCode) return;
   setSyncDot('syncing');
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sessionToken },
-      body: JSON.stringify({ payload: state }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: syncCode, payload: state }),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     setSyncDot('synced');
@@ -1141,7 +988,7 @@ async function pushToServer() {
 }
 
 function scheduleSync() {
-  if (!sessionToken) return;
+  if (!syncCode) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(pushToServer, 400);
 }
@@ -1691,153 +1538,107 @@ document.addEventListener('visibilitychange', () => {
 load();
 render();
 
-// Migrate any old memorable code into LEGACY_KEY so the post-signin claim
-// UI can offer to pull that data into the new passkey-based account.
-(() => {
-  const oldCode = localStorage.getItem('gacha-device-id-v1');
-  if (oldCode && !localStorage.getItem(LEGACY_KEY)) {
-    localStorage.setItem(LEGACY_KEY, oldCode);
+// Clear stale keys from earlier auth schemes
+localStorage.removeItem('gacha-session-token-v2');
+localStorage.removeItem('gacha-device-id-v1');
+localStorage.removeItem('gacha-legacy-code');
+
+renderSyncUI();
+if (syncCode) pullFromServer().catch(() => {});
+
+// === Sync card event handlers =====================================
+
+// "Use this code" button — sets the code from the input
+const syncSetBtn = document.getElementById('sync-set-btn');
+if (syncSetBtn) {
+  syncSetBtn.addEventListener('click', () => {
+    const input = document.getElementById('sync-code-input');
+    const value = (input?.value || '').trim();
+    if (!isValidSyncCode(value)) {
+      alert('Sync code must be 3-50 characters: letters, numbers, spaces, hyphens, or underscores.');
+      return;
+    }
+    setSyncCode(value, { pull: true });
+  });
+}
+
+// Enter key on the input also triggers "use this code"
+const syncCodeInput = document.getElementById('sync-code-input');
+if (syncCodeInput) {
+  syncCodeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      syncSetBtn?.click();
+    }
+  });
+}
+
+// Click on the code display → copy to clipboard
+const syncCodeDisplay = document.getElementById('sync-code');
+if (syncCodeDisplay) {
+  syncCodeDisplay.addEventListener('click', async () => {
+    if (!syncCode) return;
+    try {
+      await navigator.clipboard.writeText(syncCode);
+      syncCodeDisplay.classList.add('copied');
+      const orig = syncCodeDisplay.textContent;
+      syncCodeDisplay.textContent = 'copied ✓';
+      setTimeout(() => {
+        syncCodeDisplay.classList.remove('copied');
+        syncCodeDisplay.textContent = orig;
+      }, 1100);
+    } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents(syncCodeDisplay);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  });
+}
+
+// "copy" button
+const syncCopyBtn = document.getElementById('sync-copy');
+if (syncCopyBtn) {
+  syncCopyBtn.addEventListener('click', () => {
+    syncCodeDisplay?.click();
+  });
+}
+
+// "change code" button — opens prompt to set a new code
+const syncChangeBtn = document.getElementById('sync-change');
+if (syncChangeBtn) {
+  syncChangeBtn.addEventListener('click', () => {
+    const incoming = prompt('New sync code (3-50 chars). Paste from another device to share its data, or type something fresh to start a new shared data set.', syncCode || '');
+    if (incoming === null) return;
+    const trimmed = incoming.trim();
+    if (!trimmed) return;
+    if (!isValidSyncCode(trimmed)) {
+      alert('Sync code must be 3-50 characters: letters, numbers, spaces, hyphens, or underscores.');
+      return;
+    }
+    if (trimmed === syncCode) return;
+    if (!confirm('Switch to code "' + trimmed + '"?\n\nYour local data will be replaced with whatever the server has for that code. Click Cancel and export first if you want to keep the current data.')) return;
+    setSyncCode(trimmed, { pull: true });
+  });
+}
+
+// "forget on this device" button — clears local sync state only
+const syncForgetBtn = document.getElementById('sync-forget');
+if (syncForgetBtn) {
+  syncForgetBtn.addEventListener('click', () => {
+    if (!confirm('Forget this sync code on this device? Your local games stay, but they stop syncing. Other devices with the same code are unaffected.')) return;
+    setSyncCode(null, { pull: false });
+  });
+}
+
+// Pull on tab regain focus
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && syncCode) {
+    render();
+    pullFromServer().catch(() => {});
   }
-  localStorage.removeItem('gacha-device-id-v1');
-})();
-
-(async function boot() {
-  await checkSession();
-  if (signedInUser) await pullFromServer();
-})();
-
-// Sign-in button
-const signinBtn = document.getElementById('sync-signin-btn');
-if (signinBtn) {
-  signinBtn.addEventListener('click', async () => {
-    signinBtn.disabled = true;
-    const orig = signinBtn.innerHTML;
-    signinBtn.textContent = 'Waiting…';
-    try {
-      await signIn();
-    } catch (e) {
-      console.error('[mainichi] sign-in failed', e);
-      const name = e?.name || '';
-      const msg = String(e?.message || e);
-      // Friendly error copy. The browser usually surfaces "no passkey" when
-      // the user has no discoverable credential for this RP; otherwise we
-      // dump the raw error.
-      let hint;
-      if (name === 'AbortError' || /cancel/i.test(msg)) {
-        hint = 'Sign-in cancelled.';
-      } else if (/no passkey|no credential|not ?found/i.test(msg)) {
-        hint = 'No passkey found for this site in your password manager.\n\nIf you already have one, make sure you\'re using the same browser/profile where it was saved. Otherwise, click "first time here? create account" below.';
-      } else {
-        hint = 'Sign-in failed: ' + msg + '\n\nOpen the browser console (F12) for the full error.';
-      }
-      alert(hint);
-      signinBtn.innerHTML = orig;
-    } finally {
-      signinBtn.disabled = false;
-    }
-  });
-}
-
-// Explicit "create account" — for new users who'd rather not hit the
-// sign-in button and see the fallback error path.
-const registerBtn = document.getElementById('sync-register-btn');
-if (registerBtn) {
-  registerBtn.addEventListener('click', async () => {
-    registerBtn.disabled = true;
-    const orig = registerBtn.textContent;
-    registerBtn.textContent = 'creating account…';
-    try {
-      await registerFlow();
-      await pullFromServer();
-      renderSyncUI();
-    } catch (e) {
-      console.error(e);
-      alert('Registration failed: ' + (e.message || e));
-    } finally {
-      registerBtn.disabled = false;
-      registerBtn.textContent = orig;
-    }
-  });
-}
-
-// Sign-out
-const signoutBtn = document.getElementById('sync-signout');
-if (signoutBtn) {
-  signoutBtn.addEventListener('click', () => {
-    if (confirm('Sign out? Your data stays on this device but stops syncing until you sign in again.')) {
-      signOut();
-    }
-  });
-}
-
-// Change username (when signed in)
-const changeUsernameBtn = document.getElementById('sync-change-username');
-if (changeUsernameBtn) {
-  changeUsernameBtn.addEventListener('click', async () => {
-    const current = signedInUser?.username || '';
-    const next = prompt('New username (3-30 characters):', current);
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === current) return;
-    changeUsernameBtn.disabled = true;
-    const orig = changeUsernameBtn.textContent;
-    changeUsernameBtn.textContent = 'saving…';
-    try {
-      const res = await fetch('/api/username', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sessionToken },
-        body: JSON.stringify({ username: trimmed }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'HTTP ' + res.status);
-      }
-      await checkSession();
-      renderSyncUI();
-    } catch (e) {
-      alert('Could not change username: ' + (e.message || e));
-    } finally {
-      changeUsernameBtn.disabled = false;
-      changeUsernameBtn.textContent = orig;
-    }
-  });
-}
-
-// Legacy data claim
-const claimBtn = document.getElementById('sync-claim-btn');
-if (claimBtn) {
-  claimBtn.addEventListener('click', async () => {
-    const legacy = localStorage.getItem(LEGACY_KEY);
-    if (!legacy) return;
-    claimBtn.disabled = true;
-    const orig = claimBtn.textContent;
-    claimBtn.textContent = 'claiming…';
-    try {
-      const res = await fetch('/api/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + sessionToken },
-        body: JSON.stringify({ code: legacy }),
-      });
-      if (res.ok) {
-        localStorage.removeItem(LEGACY_KEY);
-        await pullFromServer();
-        renderSyncUI();
-      } else if (res.status === 404) {
-        alert('No data found on the server for that code. The legacy row may have already been claimed.');
-        localStorage.removeItem(LEGACY_KEY);
-        renderSyncUI();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert('Claim failed: ' + (err.error || 'HTTP ' + res.status));
-      }
-    } catch (e) {
-      alert('Claim failed: ' + (e.message || e));
-    } finally {
-      claimBtn.disabled = false;
-      claimBtn.textContent = orig;
-    }
-  });
-}
+});
 </script>
 </body>
 </html>

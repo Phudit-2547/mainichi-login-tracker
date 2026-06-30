@@ -1,13 +1,21 @@
 # Mainichi — gacha login tracker
 
-A single-page checklist for daily gacha game logins. Each game resets at its own custom time, not midnight. Syncs across devices via **passkey** (no codes to copy).
+A single-page checklist for daily gacha game logins. Each game resets at its own custom time, not midnight. **Sync across your devices by picking any sync code you want** — type it once, copy it to your other devices, all devices with the same code share data.
 
 ## Stack
 
-- **Frontend:** single static `index.html` + `@simplewebauthn/browser` from CDN
-- **Backend:** Vercel serverless functions in `api/`
+- **Frontend:** single static `index.html`, no build step, no external scripts
+- **Backend:** one Vercel serverless function in `api/sync.js`
 - **DB:** Neon serverless Postgres (free tier is enough)
-- **Auth:** WebAuthn passkey (discoverable credentials — syncs via iCloud Keychain / Google Password Manager)
+
+## How sync works
+
+1. Type any word or phrase in the sidebar — e.g. `86eki`, `phudit-laptop`, `happy-tiger`
+2. Hit "use this code"
+3. Click the code (or "copy") to copy it
+4. Open the site on another device, paste the same code, done — both devices share data
+
+The code IS the auth. Anyone with the code can read/write that row. Don't use a guessable code if your Neon DB is public.
 
 ## First-time setup
 
@@ -36,33 +44,13 @@ Then redeploy:
 npx vercel --prod
 ```
 
-### 3. Sign in on each device
-
-Open the deployed URL. Click **Sign in** in the sidebar. Your browser will prompt for biometric (Face ID / Touch ID / Windows Hello). First device registers a new passkey; subsequent devices sign in with the same passkey — it syncs automatically via iCloud Keychain (Apple) or Google Password Manager (Android/Chrome).
-
-## How sync works
-
-- Your data is keyed by `user_id`, not device. Server stores one row per user.
-- Sessions are JWT-less random tokens stored in `localStorage` and sent as `Authorization: Bearer ...` on every request.
-- On any change → debounced push (400ms). On load and tab focus → pull.
-- Sign out → token cleared, local data stays.
-
-## Migrating from the old sync-code flow
-
-If you had data on the old memorable code or UUID model, that data lives in a `gacha_data_legacy` table after this update. When you sign in with passkey for the first time, you'll see a "claim data" prompt in the sidebar with your old code — one click to copy that data to your new account. The legacy row is deleted afterward.
-
 ## Project layout
 
 ```
 gacha-tracker/
-├── index.html         # the app (passkey UI, drag-to-reorder, etc.)
+├── index.html         # the app (Things 3-inspired UI, drag-to-reorder, etc.)
 ├── api/
-│   ├── _lib.js          # shared DB + crypto helpers
-│   ├── passkey-register.js   # POST begin/finish registration
-│   ├── passkey-login.js      # POST begin/finish authentication
-│   ├── me.js                  # GET current session info
-│   ├── sync.js                # GET/POST data sync (session-auth)
-│   └── claim.js               # POST legacy data claim
+│   └── sync.js          # GET/POST /api/sync
 ├── package.json
 └── README.md
 ```
@@ -74,4 +62,4 @@ npm install
 DATABASE_URL='postgresql://...' npx vercel dev
 ```
 
-Then open http://localhost:3000. WebAuthn works on `localhost` without HTTPS.
+Then open http://localhost:3000.
