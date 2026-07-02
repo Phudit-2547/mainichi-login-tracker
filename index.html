@@ -382,6 +382,13 @@
     margin-top: 6px;
     word-break: break-all;
   }
+  .account-key {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    word-break: break-all;
+  }
+  .account-key .code { font-family: var(--font-mono); }
   .sync-card .sync-row { margin-bottom: 8px; }
   #sync-fallback { margin-top: 8px; }
 
@@ -961,12 +968,15 @@
           </div>
           <div id="account-signed-in" hidden>
             <div class="account-user" id="account-user"></div>
+            <div class="account-key" id="account-key"></div>
             <div class="sync-actions">
+              <button class="sync-link" id="btn-link-code" type="button">link sync code</button>
               <button class="sync-link" id="btn-signout" type="button">sign out</button>
             </div>
           </div>
           <div id="account-signed-out">
             <button class="account-btn primary" id="btn-passkey-signin" type="button">Sign in with passkey</button>
+            <input type="text" id="account-name-input" class="sync-code-input" placeholder="account name (optional)" maxlength="30" autocomplete="off" spellcheck="false">
             <button class="account-btn" id="btn-passkey-register" type="button">Create account</button>
             <div class="account-error" id="account-error" hidden></div>
             <button class="sync-link muted" id="sync-toggle" type="button">or use a sync code</button>
@@ -1175,6 +1185,14 @@ function renderSyncUI() {
     signedIn.hidden = false;
     signedOut.hidden = true;
     document.getElementById('account-user').textContent = session.username || 'signed in';
+    const keyEl = document.getElementById('account-key');
+    keyEl.textContent = '';
+    if (session.dataKey && !session.dataKey.startsWith('pk-')) {
+      keyEl.appendChild(document.createTextNode('syncing via '));
+      keyEl.appendChild(el('span', { class: 'code' }, session.dataKey));
+    } else if (session.dataKey) {
+      keyEl.textContent = 'private data key — link a sync code to share';
+    }
     return;
   }
   signedIn.hidden = true;
@@ -1977,10 +1995,10 @@ initAccount();
    Passkeys — explicit sign-in and create-account, no fallback
    between them (a failed sign-in must never mint a new account)
    ============================================================ */
-async function apiPost(url, body) {
+async function apiPost(url, body, headers) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(headers || {}) },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -2069,7 +2087,7 @@ async function passkeySignIn() {
       ceremonyId: begin.ceremonyId,
       credential,
     });
-    setSession({ token: fin.sessionToken, username: fin.username });
+    setSession({ token: fin.sessionToken, username: fin.username, dataKey: fin.dataKey });
     pullFromServer().catch(() => {});
   } catch (e) {
     showAccountError(passkeyErrorMessage(e));
@@ -2085,6 +2103,7 @@ async function passkeyRegister() {
     const begin = await apiPost('/api/passkey-register', {
       stage: 'begin',
       syncCode: syncCode || undefined,
+      username: document.getElementById('account-name-input').value.trim() || undefined,
     });
     const credential = await webauthnCreate(begin.options);
     const fin = await apiPost('/api/passkey-register', {
@@ -2092,7 +2111,7 @@ async function passkeyRegister() {
       ceremonyId: begin.ceremonyId,
       credential,
     });
-    setSession({ token: fin.sessionToken, username: fin.username });
+    setSession({ token: fin.sessionToken, username: fin.username, dataKey: fin.dataKey });
     if (state.games.length) pushToServer();
     else pullFromServer().catch(() => {});
   } catch (e) {
@@ -2116,10 +2135,41 @@ async function initAccount() {
         setSession(null);
         return;
       }
+      if (res.ok) {
+        // refresh username/dataKey (older sessions predate dataKey)
+        const me = await res.json();
+        if (me.username !== session.username || me.dataKey !== session.dataKey) {
+          setSession({ ...session, username: me.username, dataKey: me.dataKey });
+        }
+      }
     } catch (e) { /* offline — keep the session and try later */ }
   }
   if (canSync()) pullFromServer().catch(() => {});
 }
+
+async function linkSyncCode() {
+  const incoming = prompt(
+    'Link a sync code to this account (3-50 chars). Games from the code and this account will be merged; the code keeps working on devices that use it directly.',
+    (session && session.dataKey && !session.dataKey.startsWith('pk-')) ? session.dataKey : (syncCode || '')
+  );
+  if (incoming === null) return;
+  const trimmed = incoming.trim();
+  if (!trimmed) return;
+  if (!isValidSyncCode(trimmed)) {
+    alert('Sync code must be 3-50 characters: letters, numbers, spaces, hyphens, or underscores.');
+    return;
+  }
+  try {
+    const res = await apiPost('/api/claim', { syncCode: trimmed }, authHeaders());
+    setSession({ ...session, dataKey: res.dataKey });
+    setSyncCode(trimmed, { pull: false }); // keep as local fallback, like registration auto-claim
+    pullFromServer().catch(() => {});
+  } catch (e) {
+    alert('Could not link the code: ' + ((e && e.message) || 'unknown error'));
+  }
+}
+
+document.getElementById('btn-link-code').addEventListener('click', linkSyncCode);
 
 document.getElementById('btn-passkey-signin').addEventListener('click', passkeySignIn);
 document.getElementById('btn-passkey-register').addEventListener('click', passkeyRegister);

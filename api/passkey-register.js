@@ -70,7 +70,10 @@ async function begin(req, res, body) {
   }
 
   const userId = crypto.randomUUID();
-  const username = suggestUsername();
+  // Optional user-chosen name — it becomes the passkey's label in the
+  // password manager, so it can't be changed after creation.
+  const supplied = typeof body.username === 'string' ? body.username.trim() : '';
+  const username = (supplied.length >= 3 && supplied.length <= 30) ? supplied : suggestUsername();
   const { rpID } = rpConfig(req);
 
   const options = await generateRegistrationOptions({
@@ -145,5 +148,5 @@ async function finish(req, res, body) {
   `;
 
   const sessionToken = await issueSession(meta.userId);
-  return res.status(200).json({ sessionToken, username: meta.username });
+  return res.status(200).json({ sessionToken, username: meta.username, dataKey });
 }
