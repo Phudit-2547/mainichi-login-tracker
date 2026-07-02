@@ -26,6 +26,9 @@
     --success-soft: rgba(52, 199, 89, 0.14);
     --warning: #FF9500;
     --danger: #FF3B30;
+    --today-accent: #FFD60A;
+    --row-active: rgba(0, 0, 0, 0.07);
+    --header-bg: rgba(250, 250, 250, 0.82);
     --radius: 6px;
     --radius-lg: 12px;
     --transition: 160ms cubic-bezier(.2, .8, .2, 1);
@@ -51,6 +54,9 @@
       --success-soft: rgba(48, 209, 88, 0.18);
       --warning: #FF9F0A;
       --danger: #FF453A;
+      --today-accent: #FFD60A;
+      --row-active: rgba(255, 255, 255, 0.11);
+      --header-bg: rgba(28, 28, 30, 0.82);
     }
   }
 
@@ -91,7 +97,7 @@
      ================================================== */
   .app {
     display: grid;
-    grid-template-columns: 232px 1fr;
+    grid-template-columns: 256px 1fr;
     height: 100vh;
     width: 100vw;
   }
@@ -188,9 +194,10 @@
   .nav-item {
     display: flex;
     align-items: center;
+    gap: 8px;
     width: 100%;
-    padding: 4px 10px;
-    border-radius: 5px;
+    padding: 5px 10px;
+    border-radius: 6px;
     font-size: 13px;
     color: var(--text);
     transition: background var(--transition);
@@ -198,12 +205,18 @@
     margin-bottom: 1px;
   }
   .nav-item:hover { background: var(--row-hover); }
+  /* Things-style selection: soft gray pill, glyphs keep their color */
   .nav-item.active {
-    background: var(--accent);
-    color: white;
-    font-weight: 500;
+    background: var(--row-active);
+    font-weight: 600;
   }
-  .nav-item.active .count { color: rgba(255,255,255,0.75); }
+  .nav-item .nav-icon {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+  }
+  .nav-item .nav-icon.star { color: var(--today-accent); }
+  .nav-item .nav-icon.stack { color: var(--text-muted); }
   .nav-item .count {
     margin-left: auto;
     font-size: 11.5px;
@@ -364,6 +377,13 @@
     overflow-x: hidden;
     padding: 0 44px 80px;
   }
+  /* Things centers its list — cap line length on wide screens */
+  .header-inner,
+  #sections {
+    max-width: 680px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 
   .main-header {
     padding: 28px 0 14px;
@@ -371,6 +391,19 @@
     top: 0;
     background: var(--bg);
     z-index: 5;
+    margin: 0 -44px;
+    padding-left: 44px;
+    padding-right: 44px;
+    border-bottom: 1px solid transparent;
+    transition: border-color 160ms ease;
+  }
+  /* Frosted only once content actually passes beneath (blurring the empty
+     top edge produces smudge artifacts) */
+  .main.scrolled .main-header {
+    border-bottom-color: var(--border);
+    background: var(--header-bg);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
   }
   .view-title {
     font-size: 34px;
@@ -378,7 +411,17 @@
     letter-spacing: -0.024em;
     margin: 0 0 2px;
     line-height: 1.1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
+  .view-title .title-icon {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+  }
+  .view-title .title-icon.star { color: var(--today-accent); }
+  .view-title .title-icon.stack { color: var(--text-muted); }
   .view-subtitle {
     font-size: 13px;
     color: var(--text-muted);
@@ -415,9 +458,9 @@
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: start;
-    gap: 14px;
+    gap: 12px;
     padding: 11px 12px;
-    border-radius: var(--radius);
+    border-radius: 8px;
     cursor: grab;
     transition: background 120ms ease, box-shadow 120ms ease;
     background: transparent;
@@ -432,32 +475,60 @@
     text-decoration: line-through;
     text-decoration-thickness: 1.5px;
   }
-  .game-card.done .checkbox { background: var(--success); border-color: var(--success); }
 
+  /* The check circle — Things' signature moment. A padded hit area wraps
+     a 20px ring; on check an accent disc scales in, then the check pops. */
+  .checkbox-hit {
+    padding: 8px;
+    margin: -8px;
+    margin-top: -6px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
   .checkbox {
-    width: 19px;
-    height: 19px;
+    position: relative;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     border: 1.5px solid var(--border-strong);
-    margin-top: 2px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background var(--transition), border-color var(--transition);
+    transition: border-color var(--transition);
     flex-shrink: 0;
   }
-  .checkbox.done::after {
+  .checkbox-hit:hover .checkbox { border-color: var(--accent); }
+  .checkbox::before {
     content: '';
+    position: absolute;
+    inset: -1.5px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: scale(0);
+    transition: transform 180ms cubic-bezier(.3, 1.4, .4, 1);
+  }
+  .checkbox.done { border-color: var(--accent); }
+  .checkbox.done::before { transform: scale(1); }
+  .checkbox::after {
+    content: '';
+    position: relative;
+    z-index: 1;
     width: 5px;
     height: 9px;
     border-right: 2px solid white;
     border-bottom: 2px solid white;
-    transform: rotate(45deg) translate(-1px, -1px);
-    animation: check-pop 200ms cubic-bezier(.2, 1.4, .4, 1);
+    transform: rotate(45deg) translate(-1px, -1px) scale(0);
+  }
+  .checkbox.done::after {
+    animation: check-pop 200ms 80ms cubic-bezier(.2, 1.4, .4, 1) both;
   }
   @keyframes check-pop {
     0% { transform: rotate(45deg) translate(-1px, -1px) scale(0); }
     100% { transform: rotate(45deg) translate(-1px, -1px) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .checkbox::before { transition: none; }
+    .checkbox.done::after { animation: none; transform: rotate(45deg) translate(-1px, -1px) scale(1); }
   }
 
   .game-info { min-width: 0; }
@@ -491,6 +562,9 @@
     text-align: right;
     flex-shrink: 0;
     padding-top: 1px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
   }
   .streak {
     font-size: 12px;
@@ -499,7 +573,33 @@
     line-height: 1.3;
     font-variant-numeric: tabular-nums;
   }
+  .streak-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .streak-badge .flame {
+    width: 11px;
+    height: 13px;
+    color: var(--warning);
+  }
+  .game-nav .meta .streak-badge .flame { width: 9px; height: 11px; }
   .streak.zero { color: var(--text-faint); font-weight: 400; }
+  .retro-btn {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    margin-right: -6px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+  }
+  .game-card:hover .retro-btn { opacity: 1; }
+  .retro-btn:hover { color: var(--accent); background: var(--accent-soft); }
+  @media (pointer: coarse) {
+    .retro-btn { opacity: 1; }
+  }
   .reset-in {
     font-size: 11px;
     color: var(--text-muted);
@@ -643,6 +743,15 @@
     transform: scale(1.12);
   }
 
+  .yesterday-toggle {
+    font-size: 12.5px;
+    color: var(--accent);
+    padding: 4px 0;
+    text-align: left;
+  }
+  .yesterday-toggle:hover { text-decoration: underline; }
+  .yesterday-toggle.on { color: var(--success); }
+
   .modal-actions {
     display: flex;
     justify-content: flex-end;
@@ -664,9 +773,34 @@
   .btn-danger { background: var(--danger); color: white; margin-right: auto; }
 
   /* ==================================================
-     Responsive — tablet & mobile
+     Floating "+" (phone only) — Things' blue button
      ================================================== */
-  @media (max-width: 900px) {
+  .fab {
+    display: none;
+    position: fixed;
+    right: 20px;
+    bottom: 24px;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    z-index: 40;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 20px rgba(0, 122, 255, 0.4), 0 2px 6px rgba(0,0,0,0.15);
+    transition: transform var(--transition), box-shadow var(--transition);
+  }
+  .fab:active { transform: scale(0.94); }
+  .fab svg { width: 22px; height: 22px; }
+
+  /* ==================================================
+     Responsive — three tiers:
+       ≥1024px  desktop / iPad landscape: persistent sidebar
+       768-1023 iPad portrait: slide-over sidebar, desktop-scale content
+       <768     phone: drawer + FAB, tighter gutters
+     ================================================== */
+  @media (max-width: 1023px) {
     .app {
       grid-template-columns: 1fr;
     }
@@ -675,7 +809,7 @@
       top: 0;
       left: 0;
       bottom: 0;
-      width: 280px;
+      width: 300px;
       z-index: 60;
       transform: translateX(-100%);
       transition: transform 280ms cubic-bezier(.2, .8, .2, 1);
@@ -683,37 +817,48 @@
     }
     .sidebar.open {
       transform: translateX(0);
-      box-shadow: 0 0 40px rgba(0,0,0,0.18);
+      box-shadow: 0 0 48px rgba(0,0,0,0.25);
     }
     .sidebar-backdrop { display: block; }
-    .menu-toggle { display: flex; }
+    /* Menu button sits inside the sticky header band, aligned with the title */
+    .menu-toggle {
+      display: flex;
+      top: 30px;
+      left: 16px;
+      width: 36px;
+      height: 36px;
+      box-shadow: none;
+      background: transparent;
+      color: var(--text-muted);
+      z-index: 10;
+    }
+    .menu-toggle:hover { color: var(--text); background: var(--row-hover); }
     .main {
-      padding: 0 20px 80px;
+      padding: 0 32px 80px;
     }
     .main-header {
-      padding: 22px 0 14px 56px;
+      margin: 0 -32px;
+      padding: 28px 32px 14px 60px;
     }
-    .view-title {
-      font-size: 28px;
+    @media (prefers-reduced-motion: reduce) {
+      .sidebar { transition: none; }
     }
   }
-  @media (max-width: 480px) {
+  @media (max-width: 767px) {
+    .sidebar { width: min(300px, 85vw); }
     .main {
-      padding: 0 16px 80px;
+      padding: 0 16px 96px;
     }
-    .view-title {
-      font-size: 26px;
+    .main-header {
+      margin: 0 -16px;
+      padding: 24px 16px 12px 56px;
     }
-    .section-title {
-      font-size: 10.5px;
-    }
-    .game-card {
-      padding: 10px 8px;
-      gap: 11px;
-    }
-    .game-meta {
-      font-size: 11.5px;
-    }
+    .menu-toggle { top: 26px; left: 10px; }
+    .view-title { font-size: 28px; }
+    .view-title .title-icon { width: 22px; height: 22px; }
+    .game-card { padding: 12px 8px; }
+    .game-meta { font-size: 11.5px; }
+    .fab { display: flex; }
   }
 
   /* ==================================================
@@ -759,10 +904,17 @@
         <div class="nav-section">
           <div class="nav-section-title">Library</div>
           <button class="nav-item active" data-view="today">
+            <svg class="nav-icon star" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6L8 1.5z"/>
+            </svg>
             <span>Today</span>
             <span class="count" data-count="today">0</span>
           </button>
           <button class="nav-item" data-view="all">
+            <svg class="nav-icon stack" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <rect x="2.5" y="2.5" width="11" height="4.5" rx="1.5"/>
+              <rect x="2.5" y="9" width="11" height="4.5" rx="1.5"/>
+            </svg>
             <span>All Games</span>
             <span class="count" data-count="all">0</span>
           </button>
@@ -798,12 +950,21 @@
 
     <main class="main" id="main">
       <header class="main-header">
-        <h2 class="view-title" id="view-title">Today</h2>
-        <div class="view-subtitle" id="view-subtitle"></div>
+        <div class="header-inner">
+          <h2 class="view-title" id="view-title">Today</h2>
+          <div class="view-subtitle" id="view-subtitle"></div>
+        </div>
       </header>
       <div id="sections"></div>
     </main>
   </div>
+
+  <button class="fab" id="fab" aria-label="Add game">
+    <svg viewBox="0 0 22 22" fill="none" aria-hidden="true">
+      <line x1="11" y1="4" x2="11" y2="18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      <line x1="4" y1="11" x2="18" y2="11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </svg>
+  </button>
 
   <div class="modal" id="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close></div>
@@ -826,6 +987,10 @@
         <div class="form-group">
           <label for="f-note">Note (optional)</label>
           <input type="text" id="f-note" name="note" placeholder="Account, server, anything" maxlength="80">
+        </div>
+        <div class="form-group" id="yesterday-group" hidden>
+          <label>Yesterday</label>
+          <button type="button" class="yesterday-toggle" id="btn-yesterday"></button>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-danger" id="btn-delete" hidden>Delete</button>
@@ -1135,9 +1300,18 @@ function setCycleDone(id, key) {
   const i = g.history.indexOf(key);
   if (i >= 0) {
     g.history.splice(i, 1);
+    pendingMove.delete(id);
   } else {
     g.history.push(key);
     g.history.sort();
+    // Hold the row in place briefly so the check animation plays before
+    // it relocates to the "Logged in today" section.
+    if (state.view === 'today' && key === cycleKey(new Date(), g) && !prefersReducedMotion()) {
+      pendingMove.add(id);
+      setTimeout(() => {
+        if (pendingMove.delete(id)) render();
+      }, 700);
+    }
   }
   // lastLogin mirror keeps pre-history clients working: timestamp of the
   // latest checked cycle's start (or the real moment for a fresh check-in).
@@ -1262,9 +1436,35 @@ function el(tag, attrs, children) {
   return node;
 }
 
+const ICONS = {
+  star: ['0 0 16 16', '<path fill="currentColor" d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6L8 1.5z"/>'],
+  stack: ['0 0 16 16', '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'],
+  flame: ['0 0 12 14', '<path fill="currentColor" d="M6 0c.5 2.5-1.5 3.5-2.5 5C2.5 6.3 2 7.5 2 9a4 4 0 0 0 8 0c0-2-1-3.4-2-4.6-.3.9-.8 1.5-1.5 1.9C7 4.5 7.5 2 6 0z"/>'],
+};
+function svgIcon(name, cls) {
+  const [viewBox, inner] = ICONS[name];
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', cls);
+  svg.setAttribute('viewBox', viewBox);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = inner;
+  return svg;
+}
+function streakBadge(streak, flameCls) {
+  const wrap = el('span', { class: 'streak-badge' });
+  wrap.appendChild(svgIcon('flame', flameCls));
+  wrap.appendChild(document.createTextNode(String(streak)));
+  return wrap;
+}
+
 /* ============================================================
    Render
    ============================================================ */
+// Rows just checked stay in "Available now" for a beat so the circle-fill
+// animation is seen in place before the row relocates (Things-style).
+const pendingMove = new Set();
+const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 function render() {
   renderSidebar();
   renderMain();
@@ -1296,7 +1496,9 @@ function renderSidebar() {
     btn.appendChild(el('span', { class: 'dot', style: `background:${g.color}` }));
     btn.appendChild(el('span', { class: 'name' }, g.name));
     if (streak > 0) {
-      btn.appendChild(el('span', { class: 'meta' }, `🔥${streak}`));
+      const meta = el('span', { class: 'meta' });
+      meta.appendChild(streakBadge(streak, 'flame'));
+      btn.appendChild(meta);
     }
     btn.addEventListener('click', () => {
       openModal(g.id);
@@ -1313,8 +1515,8 @@ function renderMain() {
   const subtitleEl = document.getElementById('view-subtitle');
 
   const isAll = state.view === 'all';
+  setViewTitle(titleEl, isAll);
   if (state.games.length === 0) {
-    titleEl.textContent = isAll ? 'All Games' : 'Today';
     subtitleEl.textContent = '';
     sectionsEl.innerHTML = '';
     sectionsEl.appendChild(renderEmpty());
@@ -1326,7 +1528,6 @@ function renderMain() {
 
   if (isAll) {
     // Flat list in user-defined order — the canonical drag-reorder surface.
-    titleEl.textContent = 'All Games';
     const n = state.games.length;
     subtitleEl.textContent = `${n} game${n === 1 ? '' : 's'}`;
     const list = el('div', { class: 'game-list' });
@@ -1335,11 +1536,14 @@ function renderMain() {
     return;
   }
 
-  titleEl.textContent = 'Today';
   subtitleEl.textContent = formatDate(now);
 
   const buckets = { available: [], done: [] };
-  state.games.forEach(g => buckets[getStatus(g, now)].push(g));
+  state.games.forEach(g => {
+    const status = getStatus(g, now);
+    // Freshly checked rows linger in place until the check animation lands
+    buckets[status === 'done' && pendingMove.has(g.id) ? 'available' : status].push(g);
+  });
   // Render in user-defined order within each section (preserves drag-to-reorder)
 
   if (buckets.available.length) {
@@ -1352,6 +1556,12 @@ function renderMain() {
 
 function formatDate(d) {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function setViewTitle(titleEl, isAll) {
+  titleEl.textContent = '';
+  titleEl.appendChild(isAll ? svgIcon('stack', 'title-icon stack') : svgIcon('star', 'title-icon star'));
+  titleEl.appendChild(document.createTextNode(isAll ? 'All Games' : 'Today'));
 }
 
 function renderSection(title, count, games) {
@@ -1384,14 +1594,23 @@ function renderGameCard(g) {
   const checkbox = el('div', {
     class: `checkbox ${status === 'done' ? 'done' : ''}`,
     role: 'checkbox',
+    tabindex: '0',
     'aria-checked': status === 'done' ? 'true' : 'false',
     'aria-label': status === 'done' ? 'Mark not done' : 'Mark logged in today',
   });
-  checkbox.addEventListener('click', (e) => {
+  const hit = el('div', { class: 'checkbox-hit' }, checkbox);
+  hit.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleLogin(g.id);
   });
-  card.appendChild(checkbox);
+  checkbox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleLogin(g.id);
+    }
+  });
+  card.appendChild(hit);
 
   const info = el('div', { class: 'game-info' });
   info.appendChild(el('div', { class: 'game-name' }, g.name));
@@ -1405,11 +1624,26 @@ function renderGameCard(g) {
 
   const right = el('div', { class: 'game-right' });
   if (streak > 0) {
-    right.appendChild(el('div', { class: 'streak' }, `🔥 ${streak}`));
+    const s = el('div', { class: 'streak' });
+    s.appendChild(streakBadge(streak, 'flame'));
+    right.appendChild(s);
   } else {
     right.appendChild(el('div', { class: 'streak zero' }, '—'));
   }
   right.appendChild(el('div', { class: `reset-in ${countdown.cls}` }, countdown.text));
+  const yKey = prevDayKey(cycleKey(now, g));
+  if (!g.history.includes(yKey)) {
+    const retro = el('button', {
+      class: 'retro-btn',
+      type: 'button',
+      title: 'Mark yesterday as logged in',
+    }, '+ yesterday');
+    retro.addEventListener('click', (e) => {
+      e.stopPropagation();
+      checkInYesterday(g.id);
+    });
+    right.appendChild(retro);
+  }
   card.appendChild(right);
 
   const open = () => openModal(g.id);
@@ -1484,6 +1718,9 @@ function openModal(id) {
     : '04:00';
   form.elements.note.value = game?.note || '';
 
+  document.getElementById('yesterday-group').hidden = !game;
+  if (game) refreshYesterdayToggle(game);
+
   populateSwatches(game?.color || COLORS[0]);
 
   const modal = document.getElementById('modal');
@@ -1505,10 +1742,31 @@ function getSelectedColor() {
   return sel ? sel.dataset.color : COLORS[0];
 }
 
+function refreshYesterdayToggle(game) {
+  const btn = document.getElementById('btn-yesterday');
+  const done = game.history.includes(prevDayKey(cycleKey(new Date(), game)));
+  btn.textContent = done ? '✓ Logged in yesterday — tap to undo' : 'Mark yesterday as logged in';
+  btn.classList.toggle('on', done);
+}
+
+document.getElementById('btn-yesterday').addEventListener('click', () => {
+  if (!editingId) return;
+  checkInYesterday(editingId);
+  const game = state.games.find(g => g.id === editingId);
+  if (game) refreshYesterdayToggle(game);
+});
+
 /* ============================================================
    Wiring
    ============================================================ */
 document.getElementById('add-btn').addEventListener('click', () => openModal());
+document.getElementById('fab').addEventListener('click', () => openModal());
+
+// Hairline under the sticky header once content scrolls beneath it
+const mainScrollEl = document.getElementById('main');
+mainScrollEl.addEventListener('scroll', () => {
+  mainScrollEl.classList.toggle('scrolled', mainScrollEl.scrollTop > 8);
+}, { passive: true });
 
 /* ============================================================
    Sidebar toggle (mobile)
@@ -1518,7 +1776,8 @@ const backdropEl = document.getElementById('sidebar-backdrop');
 const menuToggleEl = document.getElementById('menu-toggle');
 
 function isMobile() {
-  return window.matchMedia('(max-width: 900px)').matches;
+  // Matches the overlay-sidebar tiers (iPad portrait + phone)
+  return window.matchMedia('(max-width: 1023px)').matches;
 }
 function openSidebar() {
   sidebarEl.classList.add('open');
