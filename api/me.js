@@ -1,6 +1,10 @@
 // Session introspection + sign-out.
-//   GET    /api/me   (Bearer token) → { username } | 401
+//   GET    /api/me   (Bearer token) → { username, dataKey } | 401
 //   DELETE /api/me   (Bearer token) → { ok: true }   (revokes the session)
+//
+// dataKey is disclosed to the bearer holder on purpose: it's the sync code
+// the account syncs through, and a sync code is itself a bearer secret of
+// the same trust level.
 
 import { cors, db, ensureSchema, bearerToken, sessionUser } from './_lib.js';
 
@@ -20,7 +24,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const user = await sessionUser(token);
     if (!user) return res.status(401).json({ error: 'session expired' });
-    return res.status(200).json({ username: user.username });
+    return res.status(200).json({ username: user.username, dataKey: user.dataKey });
   }
 
   if (req.method === 'DELETE') {

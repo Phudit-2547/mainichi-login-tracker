@@ -11,6 +11,13 @@
 // If the device already uses a sync code, `begin` may carry it: the new
 // account claims that code as its data_key, so existing data attaches
 // instantly and the code keeps working as a fallback on other devices.
+//
+// Lost-passkey recovery: if the code is already claimed by an account,
+// begin returns 409 with code:'code_claimed'; retrying with
+// { takeover: true } rebinds the code to the NEW account and deletes the
+// old one (its credentials and sessions — the game data is keyed by the
+// code and untouched). Knowing the code is sufficient authority here:
+// the code has always been a full read/write bearer secret for the data.
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import {
@@ -61,16 +68,21 @@ async function begin(req, res, body) {
       return res.status(400).json({ error: 'invalid sync code' });
     }
     syncCode = body.syncCode;
-    const taken = await sql`SELECT id FROM users WHERE data_key = ${syncCode} LIMIT 1`;
-    if (taken.length > 0) {
+    const taken = await sql`SELECT id, username FROM users WHERE data_key = ${syncCode} LIMIT 1`;
+    if (taken.length > 0 && body.takeover !== true) {
       return res.status(409).json({
-        error: 'That sync code already belongs to a passkey account — use "Sign in with passkey" instead.',
+        error: 'That sync code already belongs to a passkey account — sign in instead, or re-link it to a new passkey if you lost the old one.',
+        code: 'code_claimed',
+        owner: taken[0].username,
       });
     }
   }
 
   const userId = crypto.randomUUID();
-  const username = suggestUsername();
+  // Optional user-chosen name — it becomes the passkey's label in the
+  // password manager, so it can't be changed after creation.
+  const supplied = typeof body.username === 'string' ? body.username.trim() : '';
+  const username = (supplied.length >= 3 && supplied.length <= 30) ? supplied : suggestUsername();
   const { rpID } = rpConfig(req);
 
   const options = await generateRegistrationOptions({
@@ -88,6 +100,7 @@ async function begin(req, res, body) {
     userId,
     username,
     dataKey: syncCode,
+    takeover: body.takeover === true,
   });
 
   return res.status(200).json({ options, ceremonyId });
@@ -122,12 +135,19 @@ async function finish(req, res, body) {
 
   const sql = db();
   const dataKey = meta.dataKey || 'pk-' + randomToken();
+  if (meta.dataKey && meta.takeover) {
+    // Lost-passkey recovery: retire the account that held this code.
+    // Cascades to its credentials and sessions; gacha_data is keyed by
+    // the code itself, so the games are untouched.
+    await sql`DELETE FROM users WHERE data_key = ${meta.dataKey}`;
+  }
   try {
     await sql`INSERT INTO users (id, username, data_key) VALUES (${meta.userId}, ${meta.username}, ${dataKey})`;
   } catch (e) {
     // unique violation: the sync code was claimed between begin and finish
     return res.status(409).json({
-      error: 'That sync code already belongs to a passkey account — use "Sign in with passkey" instead.',
+      error: 'That sync code already belongs to a passkey account — sign in instead, or re-link it to a new passkey if you lost the old one.',
+      code: 'code_claimed',
     });
   }
 
@@ -145,5 +165,5 @@ async function finish(req, res, body) {
   `;
 
   const sessionToken = await issueSession(meta.userId);
-  return res.status(200).json({ sessionToken, username: meta.username });
+  return res.status(200).json({ sessionToken, username: meta.username, dataKey });
 }

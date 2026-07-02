@@ -19,7 +19,11 @@ All cycle math runs in the **device's local time zone**. `lastLogin` is still wr
 Both auth methods address the same server row (`gacha_data`, keyed by a text key):
 
 - **Sync code:** type any word or phrase in the sidebar, copy it to other devices. The code IS the auth — anyone with the code can read/write that row.
-- **Passkey:** "Create account" mints an account whose `data_key` is a random key — or, if the device already has a sync code, **the account claims that code**, so your existing data attaches instantly and the code keeps working as a fallback on other devices. "Sign in with passkey" never creates an account; an unknown passkey gets a clear error (this is deliberate — the old auto-register fallback minted duplicate empty accounts).
+- **Passkey:** "Create account" mints an account whose `data_key` is a random key — or, if the device already has a sync code, **the account claims that code**, so your existing data attaches instantly and the code keeps working as a fallback on other devices. "Sign in with passkey" never creates an account; an unknown passkey gets a clear error (this is deliberate — the old auto-register fallback minted duplicate empty accounts). An optional **account name** at creation becomes the passkey's label in your password manager (blank → auto-generated like `calm-river`); it can't be changed after creation because it's baked into the passkey.
+
+The signed-in card always shows which key the account syncs through (`syncing via 86eki`, or `private data key` for a random one). **link sync code** rebinds a signed-in account to any code via `POST /api/claim`: games from the code's row and the account's row are merged (union by id, check-in histories unioned — nothing lost), the old private row is cleaned up, and the code keeps working directly on other devices. Linking a code that belongs to another passkey account is rejected.
+
+**Lost passkey?** Create a new account with the same sync code set: the app detects the code is claimed and offers to re-link it to the new passkey. Confirming deletes the old account (its passkeys and sessions stop working); the games are keyed by the code and survive untouched. Knowing the code is the authority here — the code has always been a full read/write bearer secret for that data, so keep it private.
 
 Passkey ceremonies are bound to a server-issued `ceremonyId` (single-use challenge). Sessions are 90-day bearer tokens; `/api/sync` accepts either `?device_id=<code>` or `Authorization: Bearer <token>`.
 
@@ -67,7 +71,8 @@ gacha-tracker/
 │   ├── sync.js              # GET/POST /api/sync (sync code or bearer session)
 │   ├── passkey-register.js  # begin/finish create-account
 │   ├── passkey-login.js     # begin/finish sign-in (never registers)
-│   ├── me.js                # GET session check, DELETE sign-out
+│   ├── claim.js             # link a sync code to a signed-in account (merge)
+│   ├── me.js                # GET session check + linked key, DELETE sign-out
 │   └── _lib.js              # DB, schema bootstrap, sessions, challenges
 ├── package.json
 └── README.md

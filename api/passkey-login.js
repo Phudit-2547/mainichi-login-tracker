@@ -99,5 +99,5 @@ async function finish(req, res, body) {
   `;
 
   const sessionToken = await issueSession(stored.user_id);
-  return res.status(200).json({ sessionToken, username: stored.username });
+  return res.status(200).json({ sessionToken, username: stored.username, dataKey: stored.data_key });
 }
