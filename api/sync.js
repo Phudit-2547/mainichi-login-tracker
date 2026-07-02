@@ -1,12 +1,13 @@
-// Sync — pick your own code, copy it across devices.
-//   GET  /api/sync?device_id=86eki          → { payload, updated_at } | { payload: null }
-//   POST /api/sync  { device_id, payload }   → { ok: true }
-//
-// Anyone who knows the device_id can read/write that row. No auth — this
-// is a personal app, the device_id IS the shared secret. Don't pick
-// something guessable if your Neon DB is public.
+// Sync — two ways to address your data row:
+//   1. Sync code:       GET /api/sync?device_id=<code> / POST { device_id, payload }
+//      Anyone who knows the code can read/write that row — the code IS the
+//      shared secret.
+//   2. Passkey session: same endpoints with Authorization: Bearer <token>;
+//      the session resolves to the account's data_key (the sync code it
+//      claimed at registration), so both paths hit the same row.
 
 import { neon } from '@neondatabase/serverless';
+import { ensureSchema as ensureAuthSchema, bearerToken, sessionUser } from './_lib.js';
 
 const sql = neon(process.env.DATABASE_URL);
 
@@ -53,7 +54,7 @@ async function readJsonBody(req) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
@@ -62,19 +63,31 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'schema init failed: ' + e.message });
   }
 
-  // Extract device_id from query (GET) or body (POST)
+  // A passkey session resolves to the account's data_key; otherwise the
+  // caller addresses a row directly by sync code.
   let deviceId;
-  if (req.method === 'GET') {
-    deviceId = req.query?.device_id;
+  const token = bearerToken(req);
+  if (token) {
+    try {
+      await ensureAuthSchema();
+    } catch (e) {
+      return res.status(500).json({ error: 'schema init failed: ' + e.message });
+    }
+    const user = await sessionUser(token);
+    if (!user) return res.status(401).json({ error: 'session expired' });
+    deviceId = user.dataKey;
   } else {
-    const body = await readJsonBody(req);
-    deviceId = body?.device_id;
-  }
-
-  if (!isValidCode(deviceId)) {
-    return res.status(400).json({
-      error: 'device_id required (3-50 chars: letters, numbers, spaces, hyphens, underscores)',
-    });
+    if (req.method === 'GET') {
+      deviceId = req.query?.device_id;
+    } else {
+      const body = await readJsonBody(req);
+      deviceId = body?.device_id;
+    }
+    if (!isValidCode(deviceId)) {
+      return res.status(400).json({
+        error: 'device_id required (3-50 chars: letters, numbers, spaces, hyphens, underscores)',
+      });
+    }
   }
 
   if (req.method === 'GET') {
