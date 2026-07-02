@@ -878,14 +878,28 @@ function uid() {
 }
 
 function migrateGame(g) {
+  const resetHour = Number.isInteger(g.resetHour) ? g.resetHour : 4;
+  const resetMinute = Number.isInteger(g.resetMinute) ? g.resetMinute : 0;
+  const lastLogin = typeof g.lastLogin === 'string' ? g.lastLogin : null;
+  // v2: history of checked cycle-day keys (local YYYY-MM-DD of each cycle start).
+  // Older payloads only carry lastLogin — seed history from its cycle.
+  let history;
+  if (Array.isArray(g.history)) {
+    history = [...new Set(g.history.filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k)))].sort();
+  } else if (lastLogin) {
+    history = [cycleKey(new Date(lastLogin), { resetHour, resetMinute })];
+  } else {
+    history = [];
+  }
   return {
     id: typeof g.id === 'string' ? g.id : uid(),
     name: typeof g.name === 'string' && g.name.trim() ? g.name : 'Unnamed',
-    resetHour: Number.isInteger(g.resetHour) ? g.resetHour : 4,
-    resetMinute: Number.isInteger(g.resetMinute) ? g.resetMinute : 0,
+    resetHour,
+    resetMinute,
     color: typeof g.color === 'string' ? g.color : COLORS[0],
     note: typeof g.note === 'string' ? g.note : '',
-    lastLogin: typeof g.lastLogin === 'string' ? g.lastLogin : null,
+    history,
+    lastLogin,
     createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
   };
 }
@@ -958,10 +972,23 @@ async function pullFromServer() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const { payload } = await res.json();
     if (payload && Array.isArray(payload.games)) {
-      state.games = payload.games.map(migrateGame);
-      state.view = 'today';
+      // Server wins for the game list, order, and fields — but check-in
+      // history is merged (union) so a device that checked in while
+      // offline never loses days to a stale server copy.
+      const localById = new Map(state.games.map(g => [g.id, g]));
+      let localOnlyDays = false;
+      state.games = payload.games.map(migrateGame).map(g => {
+        const local = localById.get(g.id);
+        if (local) {
+          const merged = [...new Set([...g.history, ...local.history])].sort();
+          if (merged.length > g.history.length) localOnlyDays = true;
+          g.history = merged;
+        }
+        return g;
+      });
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
       render();
+      if (localOnlyDays) scheduleSync();
     }
     setSyncDot('synced');
   } catch (e) {
@@ -1005,29 +1032,39 @@ function getCycleStart(now, game) {
   return cycle;
 }
 function getNextCycleStart(now, game) {
-  return new Date(getCycleStart(now, game).getTime() + 24 * 3600 * 1000);
+  const next = getCycleStart(now, game);
+  next.setDate(next.getDate() + 1);
+  next.setHours(game.resetHour, game.resetMinute, 0, 0); // keep wall-clock time across DST
+  return next;
+}
+// A cycle is identified by the LOCAL calendar date of its start.
+// Day math must stay in local time — toISOString would shift across UTC.
+function dayKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function cycleKey(now, game) {
+  return dayKey(getCycleStart(now, game));
+}
+function prevDayKey(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(y, m - 1, d, 12); // noon anchor: immune to DST shifts
+  dt.setDate(dt.getDate() - 1);
+  return dayKey(dt);
 }
 function getStatus(game, now) {
-  if (!game.lastLogin) return 'available';
-  const currentCycle = getCycleStart(now, game);
-  const loginCycle = getCycleStart(new Date(game.lastLogin), game);
-  return loginCycle.getTime() === currentCycle.getTime() ? 'done' : 'available';
+  return game.history.includes(cycleKey(now, game)) ? 'done' : 'available';
 }
 function getStreak(game, now) {
-  if (!game.lastLogin) return 0;
-  let cycle = getCycleStart(now, game);
-  const loginDate = new Date(game.lastLogin);
+  const hist = new Set(game.history);
+  let key = cycleKey(now, game);
+  if (!hist.has(key)) {
+    key = prevDayKey(key); // today not checked yet — streak still alive from yesterday
+    if (!hist.has(key)) return 0;
+  }
   let count = 0;
-  let currentCycle = true;
-  for (let i = 0; i < 365; i++) {
-    const loginCycle = getCycleStart(loginDate, game);
-    if (loginCycle.getTime() === cycle.getTime()) {
-      count++;
-    } else if (!currentCycle) {
-      break;
-    }
-    cycle = new Date(cycle.getTime() - 24 * 3600 * 1000);
-    currentCycle = false;
+  while (hist.has(key) && count < 3650) {
+    count++;
+    key = prevDayKey(key);
   }
   return count;
 }
@@ -1068,6 +1105,7 @@ function addGame(data) {
     resetMinute: m,
     color: data.color || COLORS[0],
     note: (data.note || '').trim(),
+    history: [],
     lastLogin: null,
     createdAt: new Date().toISOString(),
   });
@@ -1091,13 +1129,39 @@ function deleteGame(id) {
   save();
   render();
 }
+function setCycleDone(id, key) {
+  const g = state.games.find(x => x.id === id);
+  if (!g) return;
+  const i = g.history.indexOf(key);
+  if (i >= 0) {
+    g.history.splice(i, 1);
+  } else {
+    g.history.push(key);
+    g.history.sort();
+  }
+  // lastLogin mirror keeps pre-history clients working: timestamp of the
+  // latest checked cycle's start (or the real moment for a fresh check-in).
+  const now = new Date();
+  if (i < 0 && key === cycleKey(now, g)) {
+    g.lastLogin = now.toISOString();
+  } else if (g.history.length) {
+    const [y, m, d] = g.history[g.history.length - 1].split('-').map(Number);
+    g.lastLogin = new Date(y, m - 1, d, g.resetHour, g.resetMinute).toISOString();
+  } else {
+    g.lastLogin = null;
+  }
+  save();
+  render();
+}
 function toggleLogin(id) {
   const g = state.games.find(x => x.id === id);
   if (!g) return;
-  const status = getStatus(g, new Date());
-  g.lastLogin = status === 'done' ? null : new Date().toISOString();
-  save();
-  render();
+  setCycleDone(id, cycleKey(new Date(), g));
+}
+function checkInYesterday(id) {
+  const g = state.games.find(x => x.id === id);
+  if (!g) return;
+  setCycleDone(id, prevDayKey(cycleKey(new Date(), g)));
 }
 
 /* ============================================================
@@ -1248,8 +1312,9 @@ function renderMain() {
   const titleEl = document.getElementById('view-title');
   const subtitleEl = document.getElementById('view-subtitle');
 
+  const isAll = state.view === 'all';
   if (state.games.length === 0) {
-    titleEl.textContent = 'Today';
+    titleEl.textContent = isAll ? 'All Games' : 'Today';
     subtitleEl.textContent = '';
     sectionsEl.innerHTML = '';
     sectionsEl.appendChild(renderEmpty());
@@ -1257,6 +1322,19 @@ function renderMain() {
   }
 
   const now = new Date();
+  sectionsEl.innerHTML = '';
+
+  if (isAll) {
+    // Flat list in user-defined order — the canonical drag-reorder surface.
+    titleEl.textContent = 'All Games';
+    const n = state.games.length;
+    subtitleEl.textContent = `${n} game${n === 1 ? '' : 's'}`;
+    const list = el('div', { class: 'game-list' });
+    state.games.forEach(g => list.appendChild(renderGameCard(g)));
+    sectionsEl.appendChild(el('div', { class: 'section' }, list));
+    return;
+  }
+
   titleEl.textContent = 'Today';
   subtitleEl.textContent = formatDate(now);
 
@@ -1264,7 +1342,6 @@ function renderMain() {
   state.games.forEach(g => buckets[getStatus(g, now)].push(g));
   // Render in user-defined order within each section (preserves drag-to-reorder)
 
-  sectionsEl.innerHTML = '';
   if (buckets.available.length) {
     sectionsEl.appendChild(renderSection('Available now', buckets.available.length, buckets.available));
   }
@@ -1631,14 +1708,6 @@ if (syncForgetBtn) {
     setSyncCode(null, { pull: false });
   });
 }
-
-// Pull on tab regain focus
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && syncCode) {
-    render();
-    pullFromServer().catch(() => {});
-  }
-});
 </script>
 </body>
 </html>
