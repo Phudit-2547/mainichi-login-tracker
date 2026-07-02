@@ -2002,7 +2002,12 @@ async function apiPost(url, body, headers) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  if (!res.ok) {
+    const err = new Error(data.error || ('HTTP ' + res.status));
+    err.code = data.code;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -2094,7 +2099,7 @@ async function passkeySignIn() {
   }
 }
 
-async function passkeyRegister() {
+async function passkeyRegister(takeover) {
   if (!passkeysAvailable()) return;
   showAccountError(null);
   try {
@@ -2104,6 +2109,7 @@ async function passkeyRegister() {
       stage: 'begin',
       syncCode: syncCode || undefined,
       username: document.getElementById('account-name-input').value.trim() || undefined,
+      takeover: takeover === true || undefined,
     });
     const credential = await webauthnCreate(begin.options);
     const fin = await apiPost('/api/passkey-register', {
@@ -2115,6 +2121,20 @@ async function passkeyRegister() {
     if (state.games.length) pushToServer();
     else pullFromServer().catch(() => {});
   } catch (e) {
+    // Lost-passkey recovery: the code is claimed, but knowing the code is
+    // the app's authority — offer to re-link it to a brand-new passkey.
+    if (e.code === 'code_claimed' && takeover !== true) {
+      const owner = (e.data && e.data.owner) ? `"${e.data.owner}"` : 'another passkey account';
+      if (confirm(
+        `The code "${syncCode}" is already linked to passkey account ${owner}.\n\n` +
+        'If you lost that passkey, you can re-link the code to a new one. ' +
+        'The old account’s passkeys and signed-in devices will stop working; your games are kept.\n\nContinue?'
+      )) {
+        return passkeyRegister(true);
+      }
+      showAccountError('Registration cancelled — the code stays with the existing account.');
+      return;
+    }
     showAccountError(passkeyErrorMessage(e));
   }
 }
@@ -2172,7 +2192,7 @@ async function linkSyncCode() {
 document.getElementById('btn-link-code').addEventListener('click', linkSyncCode);
 
 document.getElementById('btn-passkey-signin').addEventListener('click', passkeySignIn);
-document.getElementById('btn-passkey-register').addEventListener('click', passkeyRegister);
+document.getElementById('btn-passkey-register').addEventListener('click', () => passkeyRegister(false));
 document.getElementById('btn-signout').addEventListener('click', () => {
   if (!confirm('Sign out on this device? Your local games stay, but they stop syncing until you sign in again.')) return;
   signOut();

@@ -23,6 +23,8 @@ Both auth methods address the same server row (`gacha_data`, keyed by a text key
 
 The signed-in card always shows which key the account syncs through (`syncing via 86eki`, or `private data key` for a random one). **link sync code** rebinds a signed-in account to any code via `POST /api/claim`: games from the code's row and the account's row are merged (union by id, check-in histories unioned — nothing lost), the old private row is cleaned up, and the code keeps working directly on other devices. Linking a code that belongs to another passkey account is rejected.
 
+**Lost passkey?** Create a new account with the same sync code set: the app detects the code is claimed and offers to re-link it to the new passkey. Confirming deletes the old account (its passkeys and sessions stop working); the games are keyed by the code and survive untouched. Knowing the code is the authority here — the code has always been a full read/write bearer secret for that data, so keep it private.
+
 Passkey ceremonies are bound to a server-issued `ceremonyId` (single-use challenge). Sessions are 90-day bearer tokens; `/api/sync` accepts either `?device_id=<code>` or `Authorization: Bearer <token>`.
 
 ### WebAuthn scoping
