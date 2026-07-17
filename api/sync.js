@@ -15,6 +15,14 @@ let _schemaReady = null;
 async function ensureSchema() {
   if (_schemaReady) return _schemaReady;
   _schemaReady = (async () => {
+    // Fast path: current-shape table already exists — one round trip on
+    // cold start instead of the rename-check + create.
+    const ready = await sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'gacha_data' AND column_name = 'device_id'
+      LIMIT 1
+    `;
+    if (ready.length > 0) return;
     // If a previous deploy left gacha_data in the passkey shape (user_id
     // UUID), park it as a legacy table so the column shape can change.
     const cols = await sql`

@@ -1147,6 +1147,8 @@ try { session = JSON.parse(localStorage.getItem(SESSION_KEY)) || null; } catch (
 if (session && typeof session.token !== 'string') session = null;
 let syncState = 'idle';   // idle | syncing | synced | offline
 let syncTimer = null;
+let loginPrefetch = null; // { options, ceremonyId, at } — see prefetchLoginOptions
+const PREFETCH_MAX_AGE = 4 * 60 * 1000; // server challenge TTL is 5 min
 
 function setSession(next) {
   session = next;
@@ -1974,6 +1976,10 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     render();
     pullFromServer().catch(() => {});
+    // keep a fresh login challenge on hand while signed out
+    if (!session && (!loginPrefetch || Date.now() - loginPrefetch.at >= PREFETCH_MAX_AGE)) {
+      prefetchLoginOptions();
+    }
   }
 });
 
@@ -2081,11 +2087,31 @@ async function webauthnGet(options) {
   };
 }
 
+// The passkey sheet only opens after `begin` returns, and on a cold visit
+// that request pays for a serverless cold start plus the database waking
+// up — easily over a second. Prefetch the challenge at page load so the
+// sheet opens immediately on tap (this is why big sites feel instant).
+async function prefetchLoginOptions() {
+  if (session || !window.PublicKeyCredential) return;
+  try {
+    const begin = await apiPost('/api/passkey-login', { stage: 'begin' });
+    loginPrefetch = { options: begin.options, ceremonyId: begin.ceremonyId, at: Date.now() };
+  } catch (e) {
+    loginPrefetch = null; // fall back to fetching at click time
+  }
+}
+
+function takeLoginPrefetch() {
+  const p = loginPrefetch;
+  loginPrefetch = null; // challenges are single-use
+  return (p && Date.now() - p.at < PREFETCH_MAX_AGE) ? p : null;
+}
+
 async function passkeySignIn() {
   if (!passkeysAvailable()) return;
   showAccountError(null);
   try {
-    const begin = await apiPost('/api/passkey-login', { stage: 'begin' });
+    const begin = takeLoginPrefetch() || await apiPost('/api/passkey-login', { stage: 'begin' });
     const credential = await webauthnGet(begin.options);
     const fin = await apiPost('/api/passkey-login', {
       stage: 'finish',
@@ -2096,6 +2122,7 @@ async function passkeySignIn() {
     pullFromServer().catch(() => {});
   } catch (e) {
     showAccountError(passkeyErrorMessage(e));
+    prefetchLoginOptions(); // arm the next attempt
   }
 }
 
@@ -2145,17 +2172,18 @@ async function signOut() {
   } catch (e) { /* best effort — revoke may fail offline */ }
   setSession(null);
   setSyncDot('idle');
+  prefetchLoginOptions();
 }
 
 async function initAccount() {
+  if (!session) prefetchLoginOptions(); // also warms the cold function + DB
   if (session) {
     try {
       const res = await fetch('/api/me', { headers: authHeaders() });
       if (res.status === 401) {
         setSession(null);
-        return;
-      }
-      if (res.ok) {
+        prefetchLoginOptions();
+      } else if (res.ok) {
         // refresh username/dataKey (older sessions predate dataKey)
         const me = await res.json();
         if (me.username !== session.username || me.dataKey !== session.dataKey) {

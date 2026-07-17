@@ -35,14 +35,25 @@ export function ensureSchema() {
   if (_schemaReady) return _schemaReady;
   _schemaReady = (async () => {
     const sql = db();
-    // The 2026-06 passkey experiment left auth tables in an older shape
-    // (users without data_key, challenges keyed by challenge string) holding
-    // only abandoned duplicate accounts. Park them and start clean.
     const hasDataKey = await sql`
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'users' AND column_name = 'data_key'
       LIMIT 1
     `;
+    // Fast path: schema already provisioned. This runs on every function
+    // cold start, ahead of latency-sensitive calls like passkey `begin`,
+    // so it must stay one round trip — the full bootstrap below only ever
+    // runs once per database. Expired-row sweeps ride along occasionally.
+    if (hasDataKey.length > 0) {
+      if (Math.random() < 0.05) {
+        await sql`DELETE FROM challenges WHERE expires_at < NOW() - INTERVAL '1 hour'`;
+        await sql`DELETE FROM sessions WHERE expires_at < NOW() - INTERVAL '1 day'`;
+      }
+      return;
+    }
+    // The 2026-06 passkey experiment left auth tables in an older shape
+    // (users without data_key, challenges keyed by challenge string) holding
+    // only abandoned duplicate accounts. Park them and start clean.
     const hasUsers = await sql`
       SELECT table_name FROM information_schema.tables
       WHERE table_name = 'users' AND table_schema = 'public'
