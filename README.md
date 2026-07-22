@@ -12,7 +12,7 @@ A single-page checklist for daily gacha game logins. Each game resets at its own
 
 Each game stores a `history` array of `YYYY-MM-DD` day keys — the **local calendar date of the daily cycle's start** for every cycle you checked in. The streak counts consecutive days backward from today's cycle (or yesterday's, if you just haven't checked in yet today; miss a full day and it resets to 0). A small "+ yesterday" button on each row (and a toggle in the edit modal) lets you repair a streak if you logged in but forgot to tick the box.
 
-All cycle math runs in the **device's local time zone**. `lastLogin` is still written as a mirror so older cached clients keep working; note that a stale tab running the old code can push a payload without `history` — the sync merge (union of history on pull) limits the damage, and any reload picks up the new code.
+Each game is **anchored to a fixed IANA timezone** chosen when you create it (defaults to the device's current zone, editable in the game's settings). The reset boundary and streak are computed in that zone on every device, so they don't shift when you change a device's clock or view the app from another timezone. Pre-timezone games are seeded with the current device zone on first load — edit any that should be anchored elsewhere. `lastLogin` is still written as a mirror so older cached clients keep working; a stale tab running the old code can push a payload without `history`, but the sync merge (union of history on pull) limits the damage and any reload picks up the new code.
 
 ## How sync works
 
