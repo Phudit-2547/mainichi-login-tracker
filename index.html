@@ -766,30 +766,6 @@
     text-transform: none;
     letter-spacing: 0;
   }
-  .tz-banner[hidden] { display: none; }
-  .tz-banner {
-    max-width: 680px;
-    margin: 14px auto 0;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    padding: 10px 14px;
-    border-radius: 8px;
-    background: var(--accent-soft);
-    font-size: 12.5px;
-    color: var(--text-secondary);
-  }
-  .tz-banner-text { flex: 1; min-width: 180px; }
-  .tz-banner-btn {
-    color: var(--accent);
-    font-weight: 600;
-    padding: 5px 10px;
-    border-radius: 6px;
-    white-space: nowrap;
-    transition: background var(--transition), color var(--transition);
-  }
-  .tz-banner-btn:hover { background: var(--accent); color: #fff; }
 
   .swatches {
     display: flex;
@@ -1040,7 +1016,6 @@
           <div class="view-subtitle" id="view-subtitle"></div>
         </div>
       </header>
-      <div id="tz-banner" class="tz-banner" hidden></div>
       <div id="sections"></div>
     </main>
   </div>
@@ -1063,13 +1038,13 @@
           <input type="text" id="f-name" name="name" required placeholder="Genshin Impact" maxlength="60">
         </div>
         <div class="form-group">
-          <label for="f-reset">Daily reset</label>
+          <label for="f-reset">Daily reset (in the game's timezone)</label>
           <input type="time" id="f-reset" name="resetTime" required value="04:00">
         </div>
         <div class="form-group">
-          <label for="f-timezone">Timezone</label>
+          <label for="f-timezone">Game's timezone</label>
           <select id="f-timezone" name="timezone"></select>
-          <div class="field-hint">“Follow this device” resets on your current device time — it moves with you. Pick a zone to pin a game to a fixed server reset instead.</div>
+          <div class="field-hint">Pick the game/server's own reset zone (or “Follow this device”). The card always shows the reset in your device's current local time.</div>
         </div>
         <div class="form-group">
           <label>Color</label>
@@ -1445,11 +1420,15 @@ function tzLabel(tz) {
   return seg.replace(/_/g, ' ');
 }
 function formatResetTime(game) {
-  const base = `Resets at ${String(game.resetHour).padStart(2,'0')}:${String(game.resetMinute).padStart(2,'0')}`;
   const tz = gameZone(game);
-  // Only annotate when the game's zone differs from this device's, to avoid
-  // clutter in the common same-zone case.
-  return tz === localTimeZone() ? base : `${base} · ${tzLabel(tz)}`;
+  // Show the reset in THIS device's local time, converted from the game's
+  // anchored zone: a 05:00-Tokyo game reads "03:00" when you're in Bangkok.
+  const local = zonedParts(getNextCycleStart(new Date(), game), localTimeZone());
+  const localStr = `${pad2(local.hour)}:${pad2(local.minute)}`;
+  if (tz === localTimeZone()) return `Resets at ${localStr}`;
+  // Cite the game's own time+zone so the source server stays clear.
+  const src = `${pad2(game.resetHour)}:${pad2(game.resetMinute)}`;
+  return `Resets ${localStr} your time · ${src} ${tzLabel(tz)}`;
 }
 
 /* ============================================================
@@ -1664,34 +1643,6 @@ const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: r
 function render() {
   renderSidebar();
   renderMain();
-  updateTzBanner();
-}
-
-// Games pinned to a zone other than this device's — offer to switch them to
-// "follow this device" in one tap (e.g. after moving countries).
-function pinnedElsewhere() {
-  const dev = localTimeZone();
-  return state.games.filter(g => g.timezone && g.timezone !== dev);
-}
-function convertAllToFollowDevice() {
-  state.games.forEach(g => { g.timezone = ''; });
-  save();
-  render();
-}
-function updateTzBanner() {
-  const box = document.getElementById('tz-banner');
-  if (!box) return;
-  const off = pinnedElsewhere();
-  if (off.length === 0) { box.hidden = true; box.innerHTML = ''; return; }
-  box.hidden = false;
-  box.innerHTML = '';
-  const dev = tzLabel(localTimeZone());
-  const n = off.length;
-  box.appendChild(el('span', { class: 'tz-banner-text' },
-    `${n} game${n === 1 ? '' : 's'} still reset on another timezone. Follow this device (${dev}) instead?`));
-  const btn = el('button', { class: 'tz-banner-btn', type: 'button' }, `Use ${dev} for all`);
-  btn.addEventListener('click', convertAllToFollowDevice);
-  box.appendChild(btn);
 }
 
 function renderSidebar() {
