@@ -766,6 +766,30 @@
     text-transform: none;
     letter-spacing: 0;
   }
+  .tz-banner[hidden] { display: none; }
+  .tz-banner {
+    max-width: 680px;
+    margin: 14px auto 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .tz-banner-text { flex: 1; min-width: 180px; }
+  .tz-banner-btn {
+    color: var(--accent);
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 6px;
+    white-space: nowrap;
+    transition: background var(--transition), color var(--transition);
+  }
+  .tz-banner-btn:hover { background: var(--accent); color: #fff; }
 
   .swatches {
     display: flex;
@@ -1016,6 +1040,7 @@
           <div class="view-subtitle" id="view-subtitle"></div>
         </div>
       </header>
+      <div id="tz-banner" class="tz-banner" hidden></div>
       <div id="sections"></div>
     </main>
   </div>
@@ -1044,7 +1069,7 @@
         <div class="form-group">
           <label for="f-timezone">Timezone</label>
           <select id="f-timezone" name="timezone"></select>
-          <div class="field-hint">The reset stays put in this zone, even if you change your device clock.</div>
+          <div class="field-hint">“Follow this device” resets on your current device time — it moves with you. Pick a zone to pin a game to a fixed server reset instead.</div>
         </div>
         <div class="form-group">
           <label>Color</label>
@@ -1114,7 +1139,9 @@ function migrateGame(g) {
   const resetMinute = Number.isInteger(g.resetMinute) ? g.resetMinute : 0;
   // v3: games carry the timezone their reset is anchored to. Pre-v3 games
   // are seeded with this device's current zone (editable in the modal).
-  const timezone = (typeof g.timezone === 'string' && g.timezone) ? g.timezone : localTimeZone();
+  // '' (or absent) means "follow this device"; a concrete IANA string pins
+  // the game to a fixed zone regardless of the device.
+  const timezone = typeof g.timezone === 'string' ? g.timezone : '';
   const lastLogin = typeof g.lastLogin === 'string' ? g.lastLogin : null;
   // history: checked cycle-day keys. Older payloads only carry lastLogin —
   // seed from its cycle (computed in the game's zone).
@@ -1435,7 +1462,7 @@ function addGame(data) {
     name: data.name.trim(),
     resetHour: h,
     resetMinute: m,
-    timezone: data.timezone || localTimeZone(),
+    timezone: typeof data.timezone === 'string' ? data.timezone : '',
     color: data.color || COLORS[0],
     note: (data.note || '').trim(),
     history: [],
@@ -1452,7 +1479,7 @@ function updateGame(id, data) {
   g.name = data.name.trim();
   g.resetHour = h;
   g.resetMinute = m;
-  g.timezone = data.timezone || g.timezone || localTimeZone();
+  g.timezone = typeof data.timezone === 'string' ? data.timezone : (g.timezone || '');
   g.color = data.color || COLORS[0];
   g.note = (data.note || '').trim();
   save();
@@ -1637,6 +1664,34 @@ const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: r
 function render() {
   renderSidebar();
   renderMain();
+  updateTzBanner();
+}
+
+// Games pinned to a zone other than this device's — offer to switch them to
+// "follow this device" in one tap (e.g. after moving countries).
+function pinnedElsewhere() {
+  const dev = localTimeZone();
+  return state.games.filter(g => g.timezone && g.timezone !== dev);
+}
+function convertAllToFollowDevice() {
+  state.games.forEach(g => { g.timezone = ''; });
+  save();
+  render();
+}
+function updateTzBanner() {
+  const box = document.getElementById('tz-banner');
+  if (!box) return;
+  const off = pinnedElsewhere();
+  if (off.length === 0) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+  box.innerHTML = '';
+  const dev = tzLabel(localTimeZone());
+  const n = off.length;
+  box.appendChild(el('span', { class: 'tz-banner-text' },
+    `${n} game${n === 1 ? '' : 's'} still reset on another timezone. Follow this device (${dev}) instead?`));
+  const btn = el('button', { class: 'tz-banner-btn', type: 'button' }, `Use ${dev} for all`);
+  btn.addEventListener('click', convertAllToFollowDevice);
+  box.appendChild(btn);
 }
 
 function renderSidebar() {
@@ -1887,7 +1942,7 @@ function openModal(id) {
     : '04:00';
   form.elements.note.value = game?.note || '';
 
-  populateTimezones(game ? gameZone(game) : localTimeZone());
+  populateTimezones(game ? (game.timezone || '') : '');
 
   document.getElementById('yesterday-group').hidden = !game;
   if (game) refreshYesterdayToggle(game);
@@ -1911,18 +1966,19 @@ function closeModal() {
 function populateTimezones(selected) {
   const sel = document.getElementById('f-timezone');
   sel.innerHTML = '';
+  const device = localTimeZone();
+  // Default: follow whatever device the app is opened on (value '').
+  const follow = el('option', { value: '' }, `Follow this device (${tzLabel(device)})`);
+  if (!selected) follow.selected = true;
+  sel.appendChild(follow);
+  // The rest pin a game to a fixed zone (for a specific game-server reset).
   let zones;
   try { zones = (Intl.supportedValuesOf && Intl.supportedValuesOf('timeZone')) || []; }
   catch (e) { zones = []; }
-  const device = localTimeZone();
-  // Ensure the current device zone and the game's saved zone are always
-  // selectable, even if the engine's list omits them.
-  for (const z of [device, selected]) {
-    if (z && zones.indexOf(z) === -1) zones = [z, ...zones];
-  }
+  if (selected && zones.indexOf(selected) === -1) zones = [selected, ...zones];
   zones = [...new Set(zones)];
   for (const z of zones) {
-    const opt = el('option', { value: z }, z === device ? `${z} (this device)` : z);
+    const opt = el('option', { value: z }, z);
     if (z === selected) opt.selected = true;
     sel.appendChild(opt);
   }
@@ -2021,7 +2077,7 @@ document.getElementById('game-form').addEventListener('submit', (e) => {
   const data = {
     name: f.elements.name.value.trim(),
     resetTime: f.elements.resetTime.value,
-    timezone: f.elements.timezone.value || localTimeZone(),
+    timezone: f.elements.timezone.value, // '' = follow this device
     note: f.elements.note.value,
     color: getSelectedColor(),
   };
