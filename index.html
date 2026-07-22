@@ -758,6 +758,14 @@
     border-color: var(--accent);
     background: var(--card);
   }
+  .field-hint {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    margin-top: 5px;
+    line-height: 1.4;
+    text-transform: none;
+    letter-spacing: 0;
+  }
 
   .swatches {
     display: flex;
@@ -1030,8 +1038,13 @@
           <input type="text" id="f-name" name="name" required placeholder="Genshin Impact" maxlength="60">
         </div>
         <div class="form-group">
-          <label for="f-reset">Daily reset (your time)</label>
+          <label for="f-reset">Daily reset</label>
           <input type="time" id="f-reset" name="resetTime" required value="04:00">
+        </div>
+        <div class="form-group">
+          <label for="f-timezone">Timezone</label>
+          <select id="f-timezone" name="timezone"></select>
+          <div class="field-hint">The reset stays put in this zone, even if you change your device clock.</div>
         </div>
         <div class="form-group">
           <label>Color</label>
@@ -1099,14 +1112,17 @@ function uid() {
 function migrateGame(g) {
   const resetHour = Number.isInteger(g.resetHour) ? g.resetHour : 4;
   const resetMinute = Number.isInteger(g.resetMinute) ? g.resetMinute : 0;
+  // v3: games carry the timezone their reset is anchored to. Pre-v3 games
+  // are seeded with this device's current zone (editable in the modal).
+  const timezone = (typeof g.timezone === 'string' && g.timezone) ? g.timezone : localTimeZone();
   const lastLogin = typeof g.lastLogin === 'string' ? g.lastLogin : null;
-  // v2: history of checked cycle-day keys (local YYYY-MM-DD of each cycle start).
-  // Older payloads only carry lastLogin — seed history from its cycle.
+  // history: checked cycle-day keys. Older payloads only carry lastLogin —
+  // seed from its cycle (computed in the game's zone).
   let history;
   if (Array.isArray(g.history)) {
     history = [...new Set(g.history.filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k)))].sort();
   } else if (lastLogin) {
-    history = [cycleKey(new Date(lastLogin), { resetHour, resetMinute })];
+    history = [cycleKey(new Date(lastLogin), { resetHour, resetMinute, timezone })];
   } else {
     history = [];
   }
@@ -1115,6 +1131,7 @@ function migrateGame(g) {
     name: typeof g.name === 'string' && g.name.trim() ? g.name : 'Unnamed',
     resetHour,
     resetMinute,
+    timezone,
     color: typeof g.color === 'string' ? g.color : COLORS[0],
     note: typeof g.note === 'string' ? g.note : '',
     history,
@@ -1299,33 +1316,63 @@ function scheduleSync() {
 /* ============================================================
    Time math
    ============================================================ */
-function getCycleStart(now, game) {
-  const cycle = new Date(now);
-  cycle.setHours(game.resetHour, game.resetMinute, 0, 0);
-  if (cycle.getTime() > now.getTime()) {
-    cycle.setDate(cycle.getDate() - 1);
-  }
-  return cycle;
+// Each game is anchored to a fixed IANA timezone (chosen at creation), so
+// its reset boundary and streak are the SAME on every device and don't move
+// when you change a device's clock. All cycle math is computed in that zone,
+// never the device's local time.
+function localTimeZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+  catch (e) { return 'UTC'; }
+}
+function gameZone(game) {
+  return (game && typeof game.timezone === 'string' && game.timezone) ? game.timezone : localTimeZone();
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function ymdKey(y, m, d) { return `${y}-${pad2(m)}-${pad2(d)}`; }
+// Wall-clock parts of an instant as seen in a given timezone.
+function zonedParts(date, timeZone) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const o = {};
+  for (const p of fmt.formatToParts(date)) if (p.type !== 'literal') o[p.type] = p.value;
+  return { year: +o.year, month: +o.month, day: +o.day, hour: +o.hour, minute: +o.minute, second: +o.second };
+}
+// Inverse: the UTC instant at which the given wall-clock time occurs in tz
+// (two-pass offset solve, correct across DST transitions).
+function zonedTimeToInstant(y, m, d, hh, mm, tz) {
+  const guess = Date.UTC(y, m - 1, d, hh, mm, 0);
+  const offsetAt = (g) => {
+    const p = zonedParts(new Date(g), tz);
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - g;
+  };
+  const o1 = offsetAt(guess);
+  let inst = guess - o1;
+  const o2 = offsetAt(inst);
+  if (o2 !== o1) inst = guess - o2;
+  return inst;
+}
+// A cycle is identified by the calendar date (in the game's zone) of its start.
+function cycleKey(now, game) {
+  const p = zonedParts(now, gameZone(game));
+  const key = ymdKey(p.year, p.month, p.day);
+  const beforeReset = p.hour < game.resetHour || (p.hour === game.resetHour && p.minute < game.resetMinute);
+  return beforeReset ? prevDayKey(key) : key;
 }
 function getNextCycleStart(now, game) {
-  const next = getCycleStart(now, game);
-  next.setDate(next.getDate() + 1);
-  next.setHours(game.resetHour, game.resetMinute, 0, 0); // keep wall-clock time across DST
-  return next;
+  const [y, m, d] = nextDayKey(cycleKey(now, game)).split('-').map(Number);
+  return new Date(zonedTimeToInstant(y, m, d, game.resetHour, game.resetMinute, gameZone(game)));
 }
-// A cycle is identified by the LOCAL calendar date of its start.
-// Day math must stay in local time — toISOString would shift across UTC.
-function dayKey(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function cycleKey(now, game) {
-  return dayKey(getCycleStart(now, game));
-}
-function prevDayKey(key) {
+// Pure calendar arithmetic on a YYYY-MM-DD key (noon anchor: DST-immune).
+function prevDayKey(key) { return shiftDayKey(key, -1); }
+function nextDayKey(key) { return shiftDayKey(key, 1); }
+function shiftDayKey(key, delta) {
   const [y, m, d] = key.split('-').map(Number);
-  const dt = new Date(y, m - 1, d, 12); // noon anchor: immune to DST shifts
-  dt.setDate(dt.getDate() - 1);
-  return dayKey(dt);
+  const dt = new Date(y, m - 1, d, 12);
+  dt.setDate(dt.getDate() + delta);
+  return ymdKey(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
 }
 function getStatus(game, now) {
   return game.history.includes(cycleKey(now, game)) ? 'done' : 'available';
@@ -1365,8 +1412,17 @@ function formatResetCountdown(now, game) {
   }
   return { text, cls };
 }
+function tzLabel(tz) {
+  // Friendly city from an IANA id: "Asia/Tokyo" → "Tokyo"
+  const seg = String(tz).split('/').pop() || tz;
+  return seg.replace(/_/g, ' ');
+}
 function formatResetTime(game) {
-  return `Resets at ${String(game.resetHour).padStart(2,'0')}:${String(game.resetMinute).padStart(2,'0')}`;
+  const base = `Resets at ${String(game.resetHour).padStart(2,'0')}:${String(game.resetMinute).padStart(2,'0')}`;
+  const tz = gameZone(game);
+  // Only annotate when the game's zone differs from this device's, to avoid
+  // clutter in the common same-zone case.
+  return tz === localTimeZone() ? base : `${base} · ${tzLabel(tz)}`;
 }
 
 /* ============================================================
@@ -1379,6 +1435,7 @@ function addGame(data) {
     name: data.name.trim(),
     resetHour: h,
     resetMinute: m,
+    timezone: data.timezone || localTimeZone(),
     color: data.color || COLORS[0],
     note: (data.note || '').trim(),
     history: [],
@@ -1395,6 +1452,7 @@ function updateGame(id, data) {
   g.name = data.name.trim();
   g.resetHour = h;
   g.resetMinute = m;
+  g.timezone = data.timezone || g.timezone || localTimeZone();
   g.color = data.color || COLORS[0];
   g.note = (data.note || '').trim();
   save();
@@ -1431,7 +1489,7 @@ function setCycleDone(id, key) {
     g.lastLogin = now.toISOString();
   } else if (g.history.length) {
     const [y, m, d] = g.history[g.history.length - 1].split('-').map(Number);
-    g.lastLogin = new Date(y, m - 1, d, g.resetHour, g.resetMinute).toISOString();
+    g.lastLogin = new Date(zonedTimeToInstant(y, m, d, g.resetHour, g.resetMinute, gameZone(g))).toISOString();
   } else {
     g.lastLogin = null;
   }
@@ -1829,6 +1887,8 @@ function openModal(id) {
     : '04:00';
   form.elements.note.value = game?.note || '';
 
+  populateTimezones(game ? gameZone(game) : localTimeZone());
+
   document.getElementById('yesterday-group').hidden = !game;
   if (game) refreshYesterdayToggle(game);
 
@@ -1846,6 +1906,26 @@ function closeModal() {
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden', 'true');
   setTimeout(() => { modal.hidden = true; editingId = null; }, 220);
+}
+
+function populateTimezones(selected) {
+  const sel = document.getElementById('f-timezone');
+  sel.innerHTML = '';
+  let zones;
+  try { zones = (Intl.supportedValuesOf && Intl.supportedValuesOf('timeZone')) || []; }
+  catch (e) { zones = []; }
+  const device = localTimeZone();
+  // Ensure the current device zone and the game's saved zone are always
+  // selectable, even if the engine's list omits them.
+  for (const z of [device, selected]) {
+    if (z && zones.indexOf(z) === -1) zones = [z, ...zones];
+  }
+  zones = [...new Set(zones)];
+  for (const z of zones) {
+    const opt = el('option', { value: z }, z === device ? `${z} (this device)` : z);
+    if (z === selected) opt.selected = true;
+    sel.appendChild(opt);
+  }
 }
 
 function getSelectedColor() {
@@ -1941,6 +2021,7 @@ document.getElementById('game-form').addEventListener('submit', (e) => {
   const data = {
     name: f.elements.name.value.trim(),
     resetTime: f.elements.resetTime.value,
+    timezone: f.elements.timezone.value || localTimeZone(),
     note: f.elements.note.value,
     color: getSelectedColor(),
   };
