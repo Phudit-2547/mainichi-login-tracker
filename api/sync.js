@@ -74,6 +74,8 @@ export default async function handler(req, res) {
   // A passkey session resolves to the account's data_key; otherwise the
   // caller addresses a row directly by sync code.
   let deviceId;
+  let account = null; // {username, dataKey} — returned on GET so the client
+                      // needs no separate /api/me round trip on boot.
   const token = bearerToken(req);
   if (token) {
     try {
@@ -84,6 +86,7 @@ export default async function handler(req, res) {
     const user = await sessionUser(token);
     if (!user) return res.status(401).json({ error: 'session expired' });
     deviceId = user.dataKey;
+    account = { username: user.username, dataKey: user.dataKey };
   } else {
     if (req.method === 'GET') {
       deviceId = req.query?.device_id;
@@ -102,8 +105,8 @@ export default async function handler(req, res) {
     const rows = await sql`
       SELECT payload, updated_at FROM gacha_data WHERE device_id = ${deviceId}
     `;
-    if (rows.length === 0) return res.status(200).json({ payload: null, updated_at: null });
-    return res.status(200).json({ payload: rows[0].payload, updated_at: rows[0].updated_at });
+    if (rows.length === 0) return res.status(200).json({ payload: null, updated_at: null, account });
+    return res.status(200).json({ payload: rows[0].payload, updated_at: rows[0].updated_at, account });
   }
 
   if (req.method === 'POST') {

@@ -420,6 +420,32 @@
     margin-left: auto;
     margin-right: auto;
   }
+  .header-inner {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .header-titles { min-width: 0; flex: 1; }
+  /* Sync status, right in the header so it's visible on every screen size */
+  .sync-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-top: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--row-hover);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background var(--transition);
+  }
+  .sync-badge[hidden] { display: none; }
+  .sync-badge:hover { background: var(--row-active); }
+  .sync-badge:active { transform: scale(0.97); }
 
   .main-header {
     padding: 28px 0 14px;
@@ -636,6 +662,16 @@
   @media (pointer: coarse) {
     .retro-btn { opacity: 1; }
   }
+
+  /* While the first sync is loading, block mutations so nothing is entered
+     against stale data and then overwritten by the server copy. The check
+     circle stays clickable (its handler stopPropagations and the JS guard
+     swallows it) so a tap doesn't fall through and open the edit modal. */
+  .sync-locked .checkbox { opacity: 0.4; }
+  .sync-locked .checkbox-hit { cursor: default; }
+  .sync-locked .retro-btn { display: none !important; }
+  .sync-locked .add-btn,
+  .sync-locked .fab { opacity: 0.5; pointer-events: none; }
   .reset-in {
     font-size: 11px;
     color: var(--text-muted);
@@ -1012,8 +1048,14 @@
     <main class="main" id="main">
       <header class="main-header">
         <div class="header-inner">
-          <h2 class="view-title" id="view-title">Today</h2>
-          <div class="view-subtitle" id="view-subtitle"></div>
+          <div class="header-titles">
+            <h2 class="view-title" id="view-title">Today</h2>
+            <div class="view-subtitle" id="view-subtitle"></div>
+          </div>
+          <button class="sync-badge" id="sync-badge" type="button" title="Sync status — tap to sync now" hidden>
+            <span class="sync-dot"></span>
+            <span class="sync-status"></span>
+          </button>
         </div>
       </header>
       <div id="sections"></div>
@@ -1169,6 +1211,18 @@ let syncTimer = null;
 let loginPrefetch = null; // { options, ceremonyId, at } — see prefetchLoginOptions
 const PREFETCH_MAX_AGE = 4 * 60 * 1000; // server challenge TTL is 5 min
 
+// While a sync-configured account is doing its FIRST load, check-ins (and
+// other mutations) are blocked so nothing is entered against stale data and
+// then clobbered by the incoming server copy. Local-only users are never
+// gated. Set true once the initial pull settles (success OR failure).
+let syncReady = !(session || syncCode);
+function applySyncLock() {
+  const locked = (!!(session || syncCode)) && !syncReady;
+  document.body.classList.toggle('sync-locked', locked);
+  const y = document.getElementById('btn-yesterday');
+  if (y) y.disabled = locked;
+}
+
 function setSession(next) {
   session = next;
   if (next) localStorage.setItem(SESSION_KEY, JSON.stringify(next));
@@ -1184,10 +1238,15 @@ function canSync() {
 
 function setSyncDot(state) {
   syncState = state;
-  const dot = document.getElementById('sync-dot');
-  if (dot) dot.className = 'sync-dot ' + state;
-  const status = document.getElementById('sync-status');
-  if (status) status.textContent = state === 'syncing' ? 'syncing…' : (state === 'synced' ? 'synced' : 'local');
+  document.querySelectorAll('.sync-dot').forEach(d => { d.className = 'sync-dot ' + state; });
+  const label = !canSync() ? 'local'
+    : state === 'syncing' ? 'Syncing…'
+    : state === 'synced' ? 'Synced'
+    : state === 'offline' ? 'Offline' : 'Local';
+  document.querySelectorAll('.sync-status').forEach(s => { s.textContent = label; });
+  // Header badge only appears when there's actually something syncing.
+  const badge = document.getElementById('sync-badge');
+  if (badge) badge.hidden = !canSync();
 }
 
 function isValidSyncCode(s) {
@@ -1244,12 +1303,18 @@ function setSyncCode(newCode, options = {}) {
   }
   renderSyncUI();
   if (options.pull !== false && newCode) {
-    pullFromServer();
+    // Loading a code's data is a fresh identity — re-gate check-ins until it lands.
+    syncReady = false;
+    applySyncLock();
+    pullFromServer({ initial: true });
   }
 }
 
-async function pullFromServer() {
-  if (!canSync()) return;
+async function pullFromServer(opts = {}) {
+  if (!canSync()) {
+    if (opts.initial) { syncReady = true; applySyncLock(); }
+    return;
+  }
   setSyncDot('syncing');
   try {
     const url = session ? '/api/sync' : '/api/sync?device_id=' + encodeURIComponent(syncCode);
@@ -1260,7 +1325,13 @@ async function pullFromServer() {
       return;
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const { payload } = await res.json();
+    const data = await res.json();
+    // The GET returns the account too (bearer path), so no separate /api/me.
+    if (session && data.account &&
+        (data.account.username !== session.username || data.account.dataKey !== session.dataKey)) {
+      setSession({ ...session, username: data.account.username, dataKey: data.account.dataKey });
+    }
+    const payload = data.payload;
     if (payload && Array.isArray(payload.games)) {
       // Server wins for the game list, order, and fields — but check-in
       // history is merged (union) so a device that checked in while
@@ -1284,6 +1355,14 @@ async function pullFromServer() {
   } catch (e) {
     console.warn('Pull failed:', e);
     setSyncDot('offline');
+  } finally {
+    // Unlock after the FIRST load settles (even offline — union-merge on the
+    // next successful pull protects any check-ins made meanwhile).
+    if (opts.initial && !syncReady) {
+      syncReady = true;
+      applySyncLock();
+      render();
+    }
   }
 }
 
@@ -1503,11 +1582,13 @@ function setCycleDone(id, key) {
   render();
 }
 function toggleLogin(id) {
+  if (!syncReady) return; // wait for the first sync so we don't act on stale data
   const g = state.games.find(x => x.id === id);
   if (!g) return;
   setCycleDone(id, cycleKey(new Date(), g));
 }
 function checkInYesterday(id) {
+  if (!syncReady) return;
   const g = state.games.find(x => x.id === id);
   if (!g) return;
   setCycleDone(id, prevDayKey(cycleKey(new Date(), g)));
@@ -1643,6 +1724,7 @@ const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: r
 function render() {
   renderSidebar();
   renderMain();
+  applySyncLock();
 }
 
 function renderSidebar() {
@@ -1878,6 +1960,9 @@ function populateSwatches(selected) {
 let editingId = null;
 
 function openModal(id) {
+  // Don't let a new game be added before the first sync — the incoming
+  // server list would overwrite it. Editing an existing game is fine.
+  if (!id && !syncReady) return;
   editingId = id || null;
   const game = id ? state.games.find(g => g.id === id) : null;
 
@@ -1959,6 +2044,7 @@ document.getElementById('btn-yesterday').addEventListener('click', () => {
    ============================================================ */
 document.getElementById('add-btn').addEventListener('click', () => openModal());
 document.getElementById('fab').addEventListener('click', () => openModal());
+document.getElementById('sync-badge').addEventListener('click', () => pullFromServer());
 
 // Hairline under the sticky header once content scrolls beneath it
 const mainScrollEl = document.getElementById('main');
@@ -2207,7 +2293,8 @@ async function passkeySignIn() {
       credential,
     });
     setSession({ token: fin.sessionToken, username: fin.username, dataKey: fin.dataKey });
-    pullFromServer().catch(() => {});
+    syncReady = false; applySyncLock();
+    pullFromServer({ initial: true }).catch(() => {});
   } catch (e) {
     showAccountError(passkeyErrorMessage(e));
     prefetchLoginOptions(); // arm the next attempt
@@ -2233,6 +2320,7 @@ async function passkeyRegister(takeover) {
       credential,
     });
     setSession({ token: fin.sessionToken, username: fin.username, dataKey: fin.dataKey });
+    // Registration keeps local games (they push up); no stale-data risk, so no re-gate.
     if (state.games.length) pushToServer();
     else pullFromServer().catch(() => {});
   } catch (e) {
@@ -2264,23 +2352,10 @@ async function signOut() {
 }
 
 async function initAccount() {
-  if (!session) prefetchLoginOptions(); // also warms the cold function + DB
-  if (session) {
-    try {
-      const res = await fetch('/api/me', { headers: authHeaders() });
-      if (res.status === 401) {
-        setSession(null);
-        prefetchLoginOptions();
-      } else if (res.ok) {
-        // refresh username/dataKey (older sessions predate dataKey)
-        const me = await res.json();
-        if (me.username !== session.username || me.dataKey !== session.dataKey) {
-          setSession({ ...session, username: me.username, dataKey: me.dataKey });
-        }
-      }
-    } catch (e) { /* offline — keep the session and try later */ }
-  }
-  if (canSync()) pullFromServer().catch(() => {});
+  if (!session) prefetchLoginOptions(); // warms the cold function + DB for sign-in
+  // Single round trip on boot: the sync GET returns the account too, and any
+  // expired session surfaces as a 401 the pull already handles. No /api/me.
+  pullFromServer({ initial: true }).catch(() => {});
 }
 
 async function linkSyncCode() {
