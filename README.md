@@ -62,26 +62,15 @@ npx vercel --prod
 
 Schema (including parking any tables left by earlier versions as `*_legacy`) bootstraps automatically on first request.
 
-### 3. (Optional) Push reminders — the header bell
+### 3. Push reminders — the header bell (zero setup)
 
 YouTube-style notifications ("Genshin resets in 45m and you haven't logged in — 🔥 12-day streak on the line"), delivered by the OS even with the app closed. One grouped notification per account, once per game per cycle, sent when a game is still unchecked within `NOTIFY_LEAD_MINUTES` (default 60) of its reset. Follow-device games use the timezone the client stores in the payload.
 
-1. Generate VAPID keys: `npx web-push generate-vapid-keys`
-2. Add Vercel env vars, then redeploy:
+**Just tap the bell in the header** (with a sync code or passkey set — reminders are computed from the synced games). Every subscribed device of the same account gets the reminders. Everything self-configures: the server generates and stores its own VAPID keys on first use, and `.github/workflows/notify.yml` pings `/api/notify` every 15 minutes against the default production URL with no secrets required.
 
-   | Key | Value |
-   |---|---|
-   | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | from step 1 |
-   | `VAPID_SUBJECT` | `mailto:you@example.com` |
-   | `NOTIFY_SECRET` | any long random string |
-   | `NOTIFY_LEAD_MINUTES` | *(optional)* minutes before reset, default 60 |
+**iPhone/iPad:** Safari can only receive push from an installed web app — Share → **Add to Home Screen**, open Mainichi from there, then tap the bell (iOS 16.4+, Apple's rule for every website incl. YouTube). Android and desktop work directly.
 
-3. Add two **GitHub repository secrets** so `.github/workflows/notify.yml` (runs every 15 min) can ping the sender:
-   - `NOTIFY_URL` = `https://<your-app>.vercel.app/api/notify`
-   - `NOTIFY_SECRET` = same value as on Vercel
-4. In the app, tap the **bell** in the header (a sync code or passkey sign-in must be set — reminders are computed from the synced games). Every subscribed device of the same account gets the reminders.
-
-**iPhone/iPad:** Safari can only receive push from an installed web app — Share → **Add to Home Screen**, open Mainichi from there, then tap the bell (iOS 16.4+). Android and desktop work directly. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables it in one click.
+Optional hardening / overrides (env vars on Vercel): `NOTIFY_SECRET` locks `/api/notify` (mirror it in the repo's Actions secrets along with `NOTIFY_URL` if your domain differs from the default); `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` override the self-generated keys; `NOTIFY_LEAD_MINUTES` tunes the reminder lead time. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables them in one click.
 
 ## Project layout
 

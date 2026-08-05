@@ -11,22 +11,30 @@
 
 import webpush from 'web-push';
 import { db } from './_lib.js';
-import { ensurePushSchema } from './push.js';
+import { ensurePushSchema, getVapid } from './push.js';
 import { cycleKey, nextCycleStart, streak } from './_time.js';
 
 const LEAD_MINUTES = Number(process.env.NOTIFY_LEAD_MINUTES) || 60;
 
 export default async function handler(req, res) {
+  // Optional hardening: if NOTIFY_SECRET is set, require it. Without it the
+  // endpoint is open — acceptable here because it only sends the reminders
+  // that were due anyway (idempotent, deduped per cycle), same trust model
+  // as the already-public /api/sync.
   const secret = process.env.NOTIFY_SECRET;
-  if (!secret) return res.status(503).json({ error: 'notify not configured (NOTIFY_SECRET missing)' });
-  const given = req.query?.secret || (await readBody(req))?.secret;
-  if (given !== secret) return res.status(401).json({ error: 'bad secret' });
+  if (secret) {
+    const given = req.query?.secret || (await readBody(req))?.secret;
+    if (given !== secret) return res.status(401).json({ error: 'bad secret' });
+  }
   const dry = req.query?.dry === '1';
 
   if (!dry) {
-    const pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
-    if (!pub || !priv) return res.status(503).json({ error: 'VAPID keys missing' });
-    webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:mainichi@example.com', pub, priv);
+    try {
+      const v = await getVapid();
+      webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
+    } catch (e) {
+      return res.status(500).json({ error: 'vapid init failed: ' + (e.message || String(e)) });
+    }
   }
 
   try {

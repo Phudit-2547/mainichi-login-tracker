@@ -1,7 +1,10 @@
-# Pings /api/notify so reset reminders go out even though Vercel's free
-# cron only runs daily. Requires two repository secrets:
-#   NOTIFY_URL    e.g. https://mainichi-login-tracker.vercel.app/api/notify
-#   NOTIFY_SECRET the same value as the NOTIFY_SECRET env var on Vercel
+# Pings /api/notify so reset reminders go out (Vercel's free cron is
+# daily-only). Works with ZERO configuration: without secrets it pings the
+# default production URL unauthenticated.
+#
+# Optional repository secrets:
+#   NOTIFY_URL    override if your deployment isn't the default domain
+#   NOTIFY_SECRET only if you also set the NOTIFY_SECRET env var on Vercel
 #
 # Note: GitHub pauses scheduled workflows after ~60 days without repo
 # activity — one click in the Actions tab re-enables it.
@@ -19,7 +22,8 @@ jobs:
     steps:
       - name: Ping the notifier
         run: |
-          if [ -z "${{ secrets.NOTIFY_URL }}" ] || [ -z "${{ secrets.NOTIFY_SECRET }}" ]; then
-            echo "NOTIFY_URL / NOTIFY_SECRET secrets not set — skipping"; exit 0
-          fi
-          curl -fsS --max-time 60 "${{ secrets.NOTIFY_URL }}?secret=${{ secrets.NOTIFY_SECRET }}"
+          URL="${{ secrets.NOTIFY_URL }}"
+          [ -z "$URL" ] && URL="https://mainichi-login-tracker.vercel.app/api/notify"
+          SECRET="${{ secrets.NOTIFY_SECRET }}"
+          [ -n "$SECRET" ] && URL="$URL?secret=$SECRET"
+          curl -fsS --max-time 60 "$URL"
