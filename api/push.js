@@ -6,6 +6,7 @@
 // Subscriptions are keyed to the same data_key the sync row uses, so every
 // device that shares a code/account gets the reminders for its games.
 
+import webpush from 'web-push';
 import {
   cors, db, readJsonBody, bearerToken, sessionUser, isValidSyncCode,
   ensureSchema as ensureAuthSchema,
@@ -35,11 +36,50 @@ export function ensurePushSchema() {
         PRIMARY KEY (data_key, game_id, cycle_key)
       )
     `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS push_config (
+        key    TEXT PRIMARY KEY,
+        value  TEXT NOT NULL
+      )
+    `;
   })().catch(err => {
     _pushSchemaReady = null;
     throw err;
   });
   return _pushSchemaReady;
+}
+
+// VAPID keys: env vars win if set; otherwise the server generates a pair on
+// first use and keeps it in the database — zero setup for the operator.
+// (The private key lives beside the data it protects; anyone with
+// DATABASE_URL already has full access, so this adds no new exposure.)
+let _vapid = null;
+export async function getVapid() {
+  if (_vapid) return _vapid;
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    _vapid = {
+      publicKey: process.env.VAPID_PUBLIC_KEY,
+      privateKey: process.env.VAPID_PRIVATE_KEY,
+      subject: process.env.VAPID_SUBJECT || 'mailto:mainichi@example.com',
+    };
+    return _vapid;
+  }
+  await ensurePushSchema();
+  const sql = db();
+  const rows = await sql`SELECT key, value FROM push_config WHERE key IN ('vapid_public', 'vapid_private')`;
+  const found = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  if (found.vapid_public && found.vapid_private) {
+    _vapid = { publicKey: found.vapid_public, privateKey: found.vapid_private, subject: 'mailto:mainichi@example.com' };
+    return _vapid;
+  }
+  const k = webpush.generateVAPIDKeys();
+  // ON CONFLICT DO NOTHING + re-read: two cold instances racing still agree.
+  await sql`INSERT INTO push_config (key, value) VALUES ('vapid_public', ${k.publicKey}) ON CONFLICT (key) DO NOTHING`;
+  await sql`INSERT INTO push_config (key, value) VALUES ('vapid_private', ${k.privateKey}) ON CONFLICT (key) DO NOTHING`;
+  const again = await sql`SELECT key, value FROM push_config WHERE key IN ('vapid_public', 'vapid_private')`;
+  const final = Object.fromEntries(again.map(r => [r.key, r.value]));
+  _vapid = { publicKey: final.vapid_public, privateKey: final.vapid_private, subject: 'mailto:mainichi@example.com' };
+  return _vapid;
 }
 
 // Resolve the caller to a data_key: bearer session first, else device_id.
@@ -59,11 +99,12 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method === 'GET') {
-    const publicKey = process.env.VAPID_PUBLIC_KEY || '';
-    if (!publicKey) {
-      return res.status(503).json({ error: 'push not configured (VAPID_PUBLIC_KEY missing)' });
+    try {
+      const { publicKey } = await getVapid();
+      return res.status(200).json({ publicKey });
+    } catch (e) {
+      return res.status(500).json({ error: 'vapid init failed: ' + (e.message || String(e)) });
     }
-    return res.status(200).json({ publicKey });
   }
 
   try {
