@@ -62,6 +62,27 @@ npx vercel --prod
 
 Schema (including parking any tables left by earlier versions as `*_legacy`) bootstraps automatically on first request.
 
+### 3. (Optional) Push reminders — the header bell
+
+YouTube-style notifications ("Genshin resets in 45m and you haven't logged in — 🔥 12-day streak on the line"), delivered by the OS even with the app closed. One grouped notification per account, once per game per cycle, sent when a game is still unchecked within `NOTIFY_LEAD_MINUTES` (default 60) of its reset. Follow-device games use the timezone the client stores in the payload.
+
+1. Generate VAPID keys: `npx web-push generate-vapid-keys`
+2. Add Vercel env vars, then redeploy:
+
+   | Key | Value |
+   |---|---|
+   | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | from step 1 |
+   | `VAPID_SUBJECT` | `mailto:you@example.com` |
+   | `NOTIFY_SECRET` | any long random string |
+   | `NOTIFY_LEAD_MINUTES` | *(optional)* minutes before reset, default 60 |
+
+3. Add two **GitHub repository secrets** so `.github/workflows/notify.yml` (runs every 15 min) can ping the sender:
+   - `NOTIFY_URL` = `https://<your-app>.vercel.app/api/notify`
+   - `NOTIFY_SECRET` = same value as on Vercel
+4. In the app, tap the **bell** in the header (a sync code or passkey sign-in must be set — reminders are computed from the synced games). Every subscribed device of the same account gets the reminders.
+
+**iPhone/iPad:** Safari can only receive push from an installed web app — Share → **Add to Home Screen**, open Mainichi from there, then tap the bell (iOS 16.4+). Android and desktop work directly. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables it in one click.
+
 ## Project layout
 
 ```
@@ -73,6 +94,9 @@ gacha-tracker/
 │   ├── passkey-login.js     # begin/finish sign-in (never registers)
 │   ├── claim.js             # link a sync code to a signed-in account (merge)
 │   ├── me.js                # GET session check + linked key, DELETE sign-out
+│   ├── push.js              # VAPID key + push subscription store
+│   ├── notify.js            # scheduled reminder sender (secret-protected)
+│   ├── _time.js             # server port of the timezone cycle math
 │   └── _lib.js              # DB, schema bootstrap, sessions, challenges
 ├── package.json
 └── README.md
