@@ -1,10 +1,11 @@
 // Push subscription management.
-//   GET    /api/push                     → { publicKey }   (VAPID public key)
-//   POST   /api/push { subscription, device_id? }  (or Bearer) → { ok }
-//   DELETE /api/push { endpoint, device_id? }      (or Bearer) → { ok }
+//   GET    /api/push                     → { publicKey }
+//   POST   /api/push { subscription, device_id?, timezone? }  (or Bearer) → { ok }
+//   DELETE /api/push { endpoint, device_id? }                 (or Bearer) → { ok }
 //
-// Subscriptions are keyed to the same data_key the sync row uses, so every
-// device that shares a code/account gets the reminders for its games.
+// Subscriptions are keyed to the same data_key the sync row uses. Timezone
+// is stored per subscription so "Follow this device" reminders stay correct
+// when the same account is used on devices in different countries.
 
 import webpush from 'web-push';
 import {
@@ -22,11 +23,17 @@ export function ensurePushSchema() {
         endpoint    TEXT PRIMARY KEY,
         data_key    TEXT NOT NULL,
         sub         JSONB NOT NULL,
+        timezone    TEXT,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
+    // Safe migration for databases created before per-device timezones.
+    await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS timezone TEXT`;
     await sql`CREATE INDEX IF NOT EXISTS push_subs_key_idx ON push_subs(data_key)`;
-    // One reminder per game per cycle.
+
+    // Legacy account-level delivery log. Kept for migration/compatibility;
+    // new sends use push_delivery so one failing device can retry without
+    // duplicating notifications on devices that already succeeded.
     await sql`
       CREATE TABLE IF NOT EXISTS push_log (
         data_key   TEXT NOT NULL,
@@ -37,11 +44,41 @@ export function ensurePushSchema() {
       )
     `;
     await sql`
+      CREATE TABLE IF NOT EXISTS push_delivery (
+        endpoint   TEXT NOT NULL,
+        data_key   TEXT NOT NULL,
+        game_id    TEXT NOT NULL,
+        cycle_key  TEXT NOT NULL,
+        sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (endpoint, data_key, game_id, cycle_key)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS push_delivery_key_idx ON push_delivery(data_key)`;
+
+    // Preserve already-recorded legacy cycles so a deploy does not duplicate
+    // a reminder that the previous version marked as delivered.
+    await sql`
+      INSERT INTO push_delivery (endpoint, data_key, game_id, cycle_key, sent_at)
+      SELECT s.endpoint, l.data_key, l.game_id, l.cycle_key, l.sent_at
+      FROM push_log l
+      JOIN push_subs s ON s.data_key = l.data_key
+      ON CONFLICT DO NOTHING
+    `;
+
+    await sql`
       CREATE TABLE IF NOT EXISTS push_config (
         key    TEXT PRIMARY KEY,
         value  TEXT NOT NULL
       )
     `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS notify_state (
+        key           TEXT PRIMARY KEY,
+        last_run_at   TIMESTAMPTZ,
+        locked_until  TIMESTAMPTZ
+      )
+    `;
+    await sql`ALTER TABLE notify_state ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`;
   })().catch(err => {
     _pushSchemaReady = null;
     throw err;
@@ -49,10 +86,9 @@ export function ensurePushSchema() {
   return _pushSchemaReady;
 }
 
-// VAPID keys: env vars win if set; otherwise the server generates a pair on
-// first use and keeps it in the database — zero setup for the operator.
-// (The private key lives beside the data it protects; anyone with
-// DATABASE_URL already has full access, so this adds no new exposure.)
+// VAPID keys: env vars win if set; otherwise keep one atomic JSON pair in
+// push_config. A single-row insert avoids mixing the public key from one
+// racing cold start with the private key from another.
 let _vapid = null;
 export async function getVapid() {
   if (_vapid) return _vapid;
@@ -64,22 +100,46 @@ export async function getVapid() {
     };
     return _vapid;
   }
+
   await ensurePushSchema();
   const sql = db();
-  const rows = await sql`SELECT key, value FROM push_config WHERE key IN ('vapid_public', 'vapid_private')`;
-  const found = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  if (found.vapid_public && found.vapid_private) {
-    _vapid = { publicKey: found.vapid_public, privateKey: found.vapid_private, subject: 'mailto:mainichi@example.com' };
-    return _vapid;
+  const pairRows = await sql`SELECT value FROM push_config WHERE key = 'vapid_pair' LIMIT 1`;
+  if (pairRows.length) {
+    const parsed = parsePair(pairRows[0].value);
+    if (parsed) {
+      _vapid = parsed;
+      return _vapid;
+    }
   }
-  const k = webpush.generateVAPIDKeys();
-  // ON CONFLICT DO NOTHING + re-read: two cold instances racing still agree.
-  await sql`INSERT INTO push_config (key, value) VALUES ('vapid_public', ${k.publicKey}) ON CONFLICT (key) DO NOTHING`;
-  await sql`INSERT INTO push_config (key, value) VALUES ('vapid_private', ${k.privateKey}) ON CONFLICT (key) DO NOTHING`;
-  const again = await sql`SELECT key, value FROM push_config WHERE key IN ('vapid_public', 'vapid_private')`;
-  const final = Object.fromEntries(again.map(r => [r.key, r.value]));
-  _vapid = { publicKey: final.vapid_public, privateKey: final.vapid_private, subject: 'mailto:mainichi@example.com' };
+
+  // Migrate a complete legacy pair atomically into the new single-row form.
+  const legacyRows = await sql`SELECT key, value FROM push_config WHERE key IN ('vapid_public', 'vapid_private')`;
+  const legacy = Object.fromEntries(legacyRows.map(r => [r.key, r.value]));
+  const candidate = legacy.vapid_public && legacy.vapid_private
+    ? { publicKey: legacy.vapid_public, privateKey: legacy.vapid_private }
+    : webpush.generateVAPIDKeys();
+  const stored = JSON.stringify(candidate);
+  await sql`
+    INSERT INTO push_config (key, value)
+    VALUES ('vapid_pair', ${stored})
+    ON CONFLICT (key) DO NOTHING
+  `;
+
+  const finalRows = await sql`SELECT value FROM push_config WHERE key = 'vapid_pair' LIMIT 1`;
+  const finalPair = finalRows.length ? parsePair(finalRows[0].value) : null;
+  if (!finalPair) throw new Error('could not initialize VAPID key pair');
+  _vapid = finalPair;
   return _vapid;
+}
+
+function parsePair(value) {
+  try {
+    const p = JSON.parse(value);
+    if (!p || typeof p.publicKey !== 'string' || typeof p.privateKey !== 'string') return null;
+    return { publicKey: p.publicKey, privateKey: p.privateKey, subject: 'mailto:mainichi@example.com' };
+  } catch {
+    return null;
+  }
 }
 
 // Resolve the caller to a data_key: bearer session first, else device_id.
@@ -92,6 +152,16 @@ async function resolveDataKey(req, body) {
   }
   const code = body && body.device_id;
   return isValidSyncCode(code) ? code : null;
+}
+
+function validTimezone(value) {
+  if (typeof value !== 'string' || !value || value.length > 100) return null;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+    return value;
+  } catch {
+    return null;
+  }
 }
 
 export default async function handler(req, res) {
@@ -131,17 +201,25 @@ export default async function handler(req, res) {
     if (!sub || typeof sub.endpoint !== 'string' || !sub.endpoint.startsWith('https://')) {
       return res.status(400).json({ error: 'subscription with endpoint required' });
     }
+    const timezone = validTimezone(body.timezone);
     await sql`
-      INSERT INTO push_subs (endpoint, data_key, sub, created_at)
-      VALUES (${sub.endpoint}, ${dataKey}, ${JSON.stringify(sub)}::jsonb, NOW())
-      ON CONFLICT (endpoint) DO UPDATE SET data_key = EXCLUDED.data_key, sub = EXCLUDED.sub
+      INSERT INTO push_subs (endpoint, data_key, sub, timezone, created_at)
+      VALUES (${sub.endpoint}, ${dataKey}, ${JSON.stringify(sub)}::jsonb, ${timezone}, NOW())
+      ON CONFLICT (endpoint) DO UPDATE
+        SET data_key = EXCLUDED.data_key,
+            sub = EXCLUDED.sub,
+            timezone = COALESCE(EXCLUDED.timezone, push_subs.timezone)
     `;
+    // If this browser moved to another identity, old delivery markers are no
+    // longer relevant to the endpoint and would otherwise linger for a week.
+    await sql`DELETE FROM push_delivery WHERE endpoint = ${sub.endpoint} AND data_key <> ${dataKey}`;
     return res.status(200).json({ ok: true });
   }
 
   if (req.method === 'DELETE') {
     if (typeof body.endpoint !== 'string') return res.status(400).json({ error: 'endpoint required' });
     await sql`DELETE FROM push_subs WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    await sql`DELETE FROM push_delivery WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
     return res.status(200).json({ ok: true });
   }
 

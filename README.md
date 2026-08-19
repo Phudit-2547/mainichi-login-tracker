@@ -64,13 +64,13 @@ Schema (including parking any tables left by earlier versions as `*_legacy`) boo
 
 ### 3. Push reminders — the header bell (zero setup)
 
-YouTube-style notifications ("Genshin resets in 45m and you haven't logged in — 🔥 12-day streak on the line"), delivered by the OS even with the app closed. One grouped notification per account, once per game per cycle, sent when a game is still unchecked within `NOTIFY_LEAD_MINUTES` (default 60) of its reset. Follow-device games use the timezone the client stores in the payload.
+YouTube-style notifications ("Genshin resets in 45m and you haven't logged in — 🔥 12-day streak on the line"), delivered by the OS even with the app closed. Each subscribed device gets one grouped notification per cycle when a game is still unchecked within `NOTIFY_LEAD_MINUTES` (default 90) of its reset. Follow-device games use the timezone stored with that device's push subscription, so the same account can be used across countries without one device moving another device's reminder window.
 
-**Just tap the bell in the header** (with a sync code or passkey set — reminders are computed from the synced games). Every subscribed device of the same account gets the reminders. Everything self-configures: the server generates and stores its own VAPID keys on first use, and `.github/workflows/notify.yml` pings `/api/notify` every 15 minutes against the default production URL with no secrets required.
+**Just tap the bell in the header** (with a sync code or passkey set — reminders are computed from the synced games). Every subscribed device of the same account gets the reminders. Everything self-configures: the server generates and stores its own VAPID keys on first use, and `.github/workflows/notify.yml` pings `/api/notify` once per hour against the default production URL with no secrets required. The endpoint is concurrency-throttled and returns aggregate-only status data.
 
 **iPhone/iPad:** Safari can only receive push from an installed web app — Share → **Add to Home Screen**, open Mainichi from there, then tap the bell (iOS 16.4+, Apple's rule for every website incl. YouTube). Android and desktop work directly.
 
-Optional hardening / overrides (env vars on Vercel): `NOTIFY_SECRET` locks `/api/notify` (mirror it in the repo's Actions secrets along with `NOTIFY_URL` if your domain differs from the default); `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` override the self-generated keys; `NOTIFY_LEAD_MINUTES` tunes the reminder lead time. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables them in one click.
+Optional hardening / overrides (env vars on Vercel): `NOTIFY_SECRET` locks `/api/notify` (mirror it in the repo's Actions secrets along with `NOTIFY_URL` if your domain differs from the default); `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` override the self-generated keys; `NOTIFY_LEAD_MINUTES` tunes the reminder lead time; `NOTIFY_MIN_INTERVAL_MINUTES` tunes the server-side scheduler throttle. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables them in one click.
 
 ## Project layout
 
@@ -84,7 +84,7 @@ gacha-tracker/
 │   ├── claim.js             # link a sync code to a signed-in account (merge)
 │   ├── me.js                # GET session check + linked key, DELETE sign-out
 │   ├── push.js              # VAPID key + push subscription store
-│   ├── notify.js            # scheduled reminder sender (secret-protected)
+│   ├── notify.js            # scheduled reminder sender (zero-config; optional secret)
 │   ├── _time.js             # server port of the timezone cycle math
 │   └── _lib.js              # DB, schema bootstrap, sessions, challenges
 ├── package.json

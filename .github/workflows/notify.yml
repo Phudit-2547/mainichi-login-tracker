@@ -1,29 +1,41 @@
-# Pings /api/notify so reset reminders go out (Vercel's free cron is
-# daily-only). Works with ZERO configuration: without secrets it pings the
-# default production URL unauthenticated.
+# Pings /api/notify so reset reminders go out. One hourly run is enough because
+# the notifier's default lead window is 90 minutes. The off-hour minute avoids
+# the busiest part of GitHub's scheduled-workflow queue.
+#
+# Works with ZERO configuration: without secrets it pings the default production
+# URL. The endpoint returns aggregate-only data and throttles repeated triggers.
 #
 # Optional repository secrets:
 #   NOTIFY_URL    override if your deployment isn't the default domain
 #   NOTIFY_SECRET only if you also set the NOTIFY_SECRET env var on Vercel
 #
-# Note: GitHub pauses scheduled workflows after ~60 days without repo
-# activity — one click in the Actions tab re-enables it.
+# Note: GitHub pauses scheduled workflows after ~60 days without repo activity —
+# one click in the Actions tab re-enables it.
 name: send-reset-reminders
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch: {}
+
+concurrency:
+  group: send-reset-reminders
+  cancel-in-progress: false
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    env:
+      NOTIFY_URL: ${{ secrets.NOTIFY_URL }}
+      NOTIFY_SECRET: ${{ secrets.NOTIFY_SECRET }}
     steps:
       - name: Ping the notifier
         run: |
-          URL="${{ secrets.NOTIFY_URL }}"
-          [ -z "$URL" ] && URL="https://mainichi-login-tracker.vercel.app/api/notify"
-          SECRET="${{ secrets.NOTIFY_SECRET }}"
-          [ -n "$SECRET" ] && URL="$URL?secret=$SECRET"
-          curl -fsS --max-time 60 "$URL"
+          URL="${NOTIFY_URL:-https://mainichi-login-tracker.vercel.app/api/notify}"
+          if [ -n "$NOTIFY_SECRET" ]; then
+            curl -fsS --retry 2 --retry-all-errors --max-time 60 \
+              -H "Authorization: Bearer $NOTIFY_SECRET" "$URL"
+          else
+            curl -fsS --retry 2 --retry-all-errors --max-time 60 "$URL"
+          fi
