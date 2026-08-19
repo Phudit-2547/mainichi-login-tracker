@@ -1,40 +1,39 @@
-// Scheduled reminder sender — hit this every ~15 minutes (GitHub Actions
-// cron, cron-job.org, …):  GET /api/notify?secret=$NOTIFY_SECRET
+// Scheduled reminder sender — intended to be hit by a low-frequency external
+// scheduler. The endpoint is safe to trigger without configuration: normal
+// responses contain no account/game identifiers, sends are idempotent per
+// subscription, and a short database lease prevents concurrent/repeated runs.
 //
-// For every account with a push subscription: any game still unchecked for
-// its current cycle whose reset is within NOTIFY_LEAD_MINUTES gets one
-// reminder per cycle (deduped via push_log), grouped into a single
-// notification per account. Expired subscriptions (404/410) are pruned.
-//
-// ?dry=1 computes and reports what would be sent without sending/logging —
-// used by tests and for safe manual inspection.
+// Optional NOTIFY_SECRET hardens the trigger. When set, send it as
+// Authorization: Bearer <secret> (legacy ?secret= remains accepted).
 
 import webpush from 'web-push';
 import { db } from './_lib.js';
 import { ensurePushSchema, getVapid } from './push.js';
 import { cycleKey, nextCycleStart, streak } from './_time.js';
 
-const LEAD_MINUTES = Number(process.env.NOTIFY_LEAD_MINUTES) || 60;
+const configuredLead = Number(process.env.NOTIFY_LEAD_MINUTES);
+const LEAD_MINUTES = Number.isFinite(configuredLead) && configuredLead > 0 ? configuredLead : 90;
+const configuredGate = Number(process.env.NOTIFY_MIN_INTERVAL_MINUTES);
+const MIN_RUN_INTERVAL_MINUTES = Number.isFinite(configuredGate) && configuredGate > 0 ? configuredGate : 30;
 
 export default async function handler(req, res) {
-  // Optional hardening: if NOTIFY_SECRET is set, require it. Without it the
-  // endpoint is open — acceptable here because it only sends the reminders
-  // that were due anyway (idempotent, deduped per cycle), same trust model
-  // as the already-public /api/sync.
-  const secret = process.env.NOTIFY_SECRET;
-  if (secret) {
-    const given = req.query?.secret || (await readBody(req))?.secret;
-    if (given !== secret) return res.status(401).json({ error: 'bad secret' });
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return res.status(405).json({ error: 'method not allowed' });
   }
-  const dry = req.query?.dry === '1';
 
-  if (!dry) {
-    try {
-      const v = await getVapid();
-      webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
-    } catch (e) {
-      return res.status(500).json({ error: 'vapid init failed: ' + (e.message || String(e)) });
-    }
+  const secret = process.env.NOTIFY_SECRET;
+  const auth = req.headers?.authorization || '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const legacy = req.query?.secret || (await readBody(req))?.secret;
+  const authorized = !!secret && (bearer === secret || legacy === secret);
+  if (secret && !authorized) return res.status(401).json({ error: 'bad secret' });
+
+  const dry = req.query?.dry === '1';
+  // A public dry-run used to expose data_key and game details. The response is
+  // aggregate-only now, but repeated dry-runs could still be used to hammer the
+  // database. Keep dry inspection for authenticated operators/tests only.
+  if (dry && process.env.NODE_ENV === 'production' && !authorized) {
+    return res.status(403).json({ error: 'dry run requires NOTIFY_SECRET' });
   }
 
   try {
@@ -44,70 +43,160 @@ export default async function handler(req, res) {
   }
 
   const sql = db();
-  const now = new Date();
-  const report = { accounts: 0, notified: [], sent: 0, pruned: 0, dry };
+  let leased = false;
 
-  // Every account that has at least one subscription, with its data row.
-  const rows = await sql`
-    SELECT s.data_key, jsonb_agg(s.sub) AS subs, MAX(g.payload::text) AS payload
-    FROM push_subs s
-    LEFT JOIN gacha_data g ON g.device_id = s.data_key
-    GROUP BY s.data_key
-  `;
-
-  for (const row of rows) {
-    report.accounts++;
-    const payload = row.payload ? JSON.parse(row.payload) : null;
-    const games = payload && Array.isArray(payload.games) ? payload.games : [];
-    const payloadTz = payload && payload.timezone;
-
-    const due = [];
-    for (const g of games) {
-      if (!g || typeof g.id !== 'string' || !Number.isInteger(g.resetHour)) continue;
-      const key = cycleKey(now, g, payloadTz);
-      if (Array.isArray(g.history) && g.history.includes(key)) continue; // already checked in
-      const msLeft = nextCycleStart(now, g, payloadTz) - now.getTime();
-      if (msLeft <= 0 || msLeft > LEAD_MINUTES * 60 * 1000) continue;
-      const logged = await sql`
-        SELECT 1 FROM push_log
-        WHERE data_key = ${row.data_key} AND game_id = ${g.id} AND cycle_key = ${key}
-        LIMIT 1
+  // Public zero-config mode still needs abuse/concurrency resistance. The lease
+  // expires automatically if an invocation crashes. last_run_at is written
+  // only after a successful pass, so HTTP retries can immediately retry real
+  // failures instead of being mistaken for duplicate scheduler calls.
+  if (!dry) {
+    try {
+      const lease = await sql`
+        INSERT INTO notify_state (key, last_run_at, locked_until)
+        VALUES ('scheduler', NULL, NOW() + INTERVAL '3 minutes')
+        ON CONFLICT (key) DO UPDATE
+          SET locked_until = EXCLUDED.locked_until
+        WHERE (notify_state.locked_until IS NULL OR notify_state.locked_until <= NOW())
+          AND (notify_state.last_run_at IS NULL OR
+               notify_state.last_run_at <= NOW() - (${MIN_RUN_INTERVAL_MINUTES} * INTERVAL '1 minute'))
+        RETURNING key
       `;
-      if (logged.length > 0) continue;
-      due.push({ game: g, key, minutesLeft: Math.max(1, Math.round(msLeft / 60000)), streak: streak(g, now, payloadTz) });
+      if (lease.length === 0) {
+        return res.status(200).json({ ok: true, throttled: true, sent: 0, pruned: 0, failed: 0 });
+      }
+      leased = true;
+    } catch (e) {
+      return res.status(500).json({ error: 'scheduler lease failed: ' + (e.message || String(e)) });
     }
-    if (due.length === 0) continue;
+  }
 
-    const message = buildMessage(due);
-    report.notified.push({ dataKey: row.data_key, games: due.map(d => ({ id: d.game.id, name: d.game.name, minutesLeft: d.minutesLeft, streak: d.streak })) });
-    if (dry) continue;
+  try {
+    if (!dry) {
+      const v = await getVapid();
+      webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
+    }
 
-    for (const d of due) {
-      await sql`
-        INSERT INTO push_log (data_key, game_id, cycle_key)
-        VALUES (${row.data_key}, ${d.game.id}, ${d.key})
-        ON CONFLICT DO NOTHING
+    const now = new Date();
+    const report = {
+      ok: true,
+      dry,
+      subscriptions: 0,
+      dueSubscriptions: 0,
+      sent: 0,
+      pruned: 0,
+      failed: 0,
+    };
+
+    // Process each subscription independently. A follow-device game's reset is
+    // evaluated in that subscription's timezone, not whichever device synced
+    // the account most recently.
+    const rows = await sql`
+      SELECT s.endpoint, s.data_key, s.sub, s.timezone, g.payload
+      FROM push_subs s
+      LEFT JOIN gacha_data g ON g.device_id = s.data_key
+    `;
+    report.subscriptions = rows.length;
+
+    for (const row of rows) {
+      const payload = row.payload
+        ? (typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload)
+        : null;
+      const games = payload && Array.isArray(payload.games) ? payload.games : [];
+      const deviceTz = row.timezone || (payload && payload.timezone);
+
+      const deliveredRows = await sql`
+        SELECT game_id, cycle_key
+        FROM push_delivery
+        WHERE endpoint = ${row.endpoint}
+          AND data_key = ${row.data_key}
+          AND sent_at >= NOW() - INTERVAL '2 days'
       `;
-    }
-    for (const sub of row.subs) {
+      const delivered = new Set(deliveredRows.map(r => `${r.game_id}\n${r.cycle_key}`));
+
+      const due = [];
+      for (const g of games) {
+        if (!g || typeof g.id !== 'string' ||
+            !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
+        const key = cycleKey(now, g, deviceTz);
+        if (Array.isArray(g.history) && g.history.includes(key)) continue;
+        if (delivered.has(`${g.id}\n${key}`)) continue;
+        const msLeft = nextCycleStart(now, g, deviceTz) - now.getTime();
+        if (msLeft <= 0 || msLeft > LEAD_MINUTES * 60 * 1000) continue;
+        due.push({
+          game: g,
+          key,
+          minutesLeft: Math.max(1, Math.round(msLeft / 60000)),
+          streak: streak(g, now, deviceTz),
+        });
+      }
+      if (due.length === 0) continue;
+
+      report.dueSubscriptions++;
+      if (dry) continue;
+
+      const message = buildMessage(due);
       try {
-        await webpush.sendNotification(sub, JSON.stringify(message), { TTL: 3600 });
+        await webpush.sendNotification(row.sub, JSON.stringify(message), { TTL: 3600 });
+        // Record only after the push service accepted the notification. If the
+        // send fails transiently, the HTTP retry / next scheduler run retries
+        // this device while successful devices remain deduped.
+        for (const d of due) {
+          await sql`
+            INSERT INTO push_delivery (endpoint, data_key, game_id, cycle_key, sent_at)
+            VALUES (${row.endpoint}, ${row.data_key}, ${d.game.id}, ${d.key}, NOW())
+            ON CONFLICT DO NOTHING
+          `;
+        }
         report.sent++;
       } catch (e) {
         if (e.statusCode === 404 || e.statusCode === 410) {
-          await sql`DELETE FROM push_subs WHERE endpoint = ${sub.endpoint}`;
+          await sql`DELETE FROM push_subs WHERE endpoint = ${row.endpoint}`;
+          await sql`DELETE FROM push_delivery WHERE endpoint = ${row.endpoint}`;
           report.pruned++;
         } else {
+          report.failed++;
           console.warn('[notify] send failed:', e.statusCode || e.message);
         }
       }
     }
-  }
 
-  if (!dry) {
-    await sql`DELETE FROM push_log WHERE sent_at < NOW() - INTERVAL '7 days'`;
+    if (!dry) {
+      await sql`DELETE FROM push_delivery WHERE sent_at < NOW() - INTERVAL '7 days'`;
+      await sql`DELETE FROM push_log WHERE sent_at < NOW() - INTERVAL '7 days'`;
+
+      if (report.failed > 0) {
+        // Let curl --retry make an immediate second attempt. Successful
+        // subscriptions were recorded above, so only failed devices retry.
+        await releaseLease(sql);
+        leased = false;
+        return res.status(503).json(report);
+      }
+
+      await sql`
+        UPDATE notify_state
+        SET last_run_at = NOW(), locked_until = NULL
+        WHERE key = 'scheduler'
+      `;
+      leased = false;
+    }
+
+    // Deliberately aggregate-only: data_key is a bearer secret for /api/sync
+    // and game names/history are private user data.
+    return res.status(200).json(report);
+  } catch (e) {
+    if (leased) {
+      try { await releaseLease(sql); } catch (releaseError) { /* lease expires on its own */ }
+    }
+    return res.status(500).json({ error: 'notify failed: ' + (e.message || String(e)) });
   }
-  return res.status(200).json(report);
+}
+
+async function releaseLease(sql) {
+  await sql`
+    UPDATE notify_state
+    SET locked_until = NULL
+    WHERE key = 'scheduler'
+  `;
 }
 
 function buildMessage(due) {
