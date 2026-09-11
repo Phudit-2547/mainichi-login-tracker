@@ -14,6 +14,10 @@ Each game stores a `history` array of `YYYY-MM-DD` day keys — the **local cale
 
 Each game is **anchored to a fixed IANA timezone** chosen when you create it (defaults to the device's current zone, editable in the game's settings). The reset boundary and streak are computed in that zone on every device, so they don't shift when you change a device's clock or view the app from another timezone. Pre-timezone games are seeded with the current device zone on first load — edit any that should be anchored elsewhere. `lastLogin` is still written as a mirror so older cached clients keep working; a stale tab running the old code can push a payload without `history`, but the sync merge (union of history on pull) limits the damage and any reload picks up the new code.
 
+## Archiving games
+
+Open a game's edit dialog and choose **Archive** when you stop playing it. Archived games disappear from Today, All Games, and the active game sidebar; they are also excluded from reset reminders. Their settings and complete check-in history remain synced. Use the **Archived** view to inspect, restore, or permanently delete them.
+
 ## How sync works
 
 Both auth methods address the same server row (`gacha_data`, keyed by a text key):
