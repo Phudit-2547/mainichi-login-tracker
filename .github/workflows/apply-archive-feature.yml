@@ -1,0 +1,56 @@
+name: Apply archive feature
+
+on:
+  push:
+    branches:
+      - feat/archive-games
+    paths:
+      - .github/scripts/apply-archive-feature.mjs
+      - .github/scripts/repair-archive-script.mjs
+      - .github/workflows/apply-archive-feature.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/archive-games
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Repair and validate migration script
+        run: |
+          node --check .github/scripts/repair-archive-script.mjs
+          node .github/scripts/repair-archive-script.mjs
+          node --check .github/scripts/apply-archive-feature.mjs
+
+      - name: Apply archive feature
+        run: node .github/scripts/apply-archive-feature.mjs
+
+      - name: Run tests
+        run: npm test
+
+      - name: Validate and commit generated changes
+        run: |
+          rm -f .github/scripts/apply-archive-feature.mjs
+          rm -f .github/scripts/repair-archive-script.mjs
+          rm -f .github/workflows/apply-archive-feature.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: archive inactive games"
+          git push origin HEAD:feat/archive-games
