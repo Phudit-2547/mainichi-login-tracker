@@ -16,6 +16,27 @@ const LEAD_MINUTES = Number.isFinite(configuredLead) && configuredLead > 0 ? con
 const configuredGate = Number(process.env.NOTIFY_MIN_INTERVAL_MINUTES);
 const MIN_RUN_INTERVAL_MINUTES = Number.isFinite(configuredGate) && configuredGate > 0 ? configuredGate : 30;
 
+export function collectDueGames(games, now, deviceTz, delivered = new Set(), leadMinutes = LEAD_MINUTES) {
+  const due = [];
+  for (const g of Array.isArray(games) ? games : []) {
+    if (!g || g.archived === true || typeof g.id !== 'string' ||
+        !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
+    const key = cycleKey(now, g, deviceTz);
+    if (Array.isArray(g.history) && g.history.includes(key)) continue;
+    if (delivered.has(`${g.id}
+${key}`)) continue;
+    const msLeft = nextCycleStart(now, g, deviceTz) - now.getTime();
+    if (msLeft <= 0 || msLeft > leadMinutes * 60 * 1000) continue;
+    due.push({
+      game: g,
+      key,
+      minutesLeft: Math.max(1, Math.round(msLeft / 60000)),
+      streak: streak(g, now, deviceTz),
+    });
+  }
+  return due;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ error: 'method not allowed' });
@@ -113,22 +134,7 @@ export default async function handler(req, res) {
       `;
       const delivered = new Set(deliveredRows.map(r => `${r.game_id}\n${r.cycle_key}`));
 
-      const due = [];
-      for (const g of games) {
-        if (!g || typeof g.id !== 'string' ||
-            !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
-        const key = cycleKey(now, g, deviceTz);
-        if (Array.isArray(g.history) && g.history.includes(key)) continue;
-        if (delivered.has(`${g.id}\n${key}`)) continue;
-        const msLeft = nextCycleStart(now, g, deviceTz) - now.getTime();
-        if (msLeft <= 0 || msLeft > LEAD_MINUTES * 60 * 1000) continue;
-        due.push({
-          game: g,
-          key,
-          minutesLeft: Math.max(1, Math.round(msLeft / 60000)),
-          streak: streak(g, now, deviceTz),
-        });
-      }
+      const due = collectDueGames(games, now, deviceTz, delivered);
       if (due.length === 0) continue;
 
       report.dueSubscriptions++;

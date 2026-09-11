@@ -200,7 +200,8 @@
     flex-shrink: 0;
   }
   .nav-item .nav-icon.star { color: var(--today-accent); }
-  .nav-item .nav-icon.stack { color: var(--text-muted); }
+  .nav-item .nav-icon.stack,
+  .nav-item .nav-icon.archive { color: var(--text-muted); }
   .nav-item .count {
     margin-left: auto;
     font-size: 11.5px;
@@ -495,7 +496,8 @@
     flex-shrink: 0;
   }
   .view-title .title-icon.star { color: var(--today-accent); }
-  .view-title .title-icon.stack { color: var(--text-muted); }
+  .view-title .title-icon.stack,
+  .view-title .title-icon.archive { color: var(--text-muted); }
   .view-subtitle {
     font-size: 13px;
     color: var(--text-muted);
@@ -549,6 +551,39 @@
     text-decoration: line-through;
     text-decoration-thickness: 1.5px;
   }
+  .game-card.archived {
+    cursor: pointer;
+    opacity: 0.78;
+  }
+  .game-card.archived .game-name {
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+  .archive-mark {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .archive-mark svg { width: 20px; height: 20px; }
+  .archive-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.3;
+  }
+  .restore-btn {
+    margin-top: 4px;
+    padding: 2px 6px;
+    margin-right: -6px;
+    border-radius: 4px;
+    color: var(--accent);
+    font-size: 11px;
+    transition: background 120ms ease;
+  }
+  .restore-btn:hover { background: var(--accent-soft); }
 
   /* The check circle — Things' signature moment. A padded hit area wraps
      a 20px ring; on check an accent disc scales in, then the check pops. */
@@ -846,6 +881,7 @@
 
   .modal-actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 6px;
     margin-top: 18px;
@@ -1004,6 +1040,15 @@
             <span>All Games</span>
             <span class="count" data-count="all">0</span>
           </button>
+          <button class="nav-item" data-view="archived">
+            <svg class="nav-icon archive" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2.5 5.5h11v7.5h-11z"/>
+              <path d="M1.5 2.5h13v3h-13z"/>
+              <path d="M6 8h4" stroke-linecap="round"/>
+            </svg>
+            <span>Archived</span>
+            <span class="count" data-count="archived">0</span>
+          </button>
         </div>
         <div class="nav-section" id="games-section" hidden>
           <div class="nav-section-title">Games</div>
@@ -1122,6 +1167,7 @@
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-danger" id="btn-delete" hidden>Delete</button>
+          <button type="button" class="btn btn-secondary" id="btn-archive" hidden>Archive</button>
           <button type="button" class="btn btn-secondary" data-close>Cancel</button>
           <button type="submit" class="btn btn-primary" id="btn-save">Save</button>
         </div>
@@ -1200,6 +1246,7 @@ function migrateGame(g) {
     timezone,
     color: typeof g.color === 'string' ? g.color : COLORS[0],
     note: typeof g.note === 'string' ? g.note : '',
+    archived: g.archived === true,
     history,
     lastLogin,
     createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
@@ -1535,6 +1582,14 @@ function formatResetTime(game) {
 /* ============================================================
    Game ops
    ============================================================ */
+function activeGames(games = state.games) {
+  return games.filter(g => g.archived !== true);
+}
+
+function archivedGames(games = state.games) {
+  return games.filter(g => g.archived === true);
+}
+
 function addGame(data) {
   const [h, m] = data.resetTime.split(':').map(Number);
   state.games.push({
@@ -1545,6 +1600,7 @@ function addGame(data) {
     timezone: typeof data.timezone === 'string' ? data.timezone : '',
     color: data.color || COLORS[0],
     note: (data.note || '').trim(),
+    archived: false,
     history: [],
     lastLogin: null,
     createdAt: new Date().toISOString(),
@@ -1570,9 +1626,17 @@ function deleteGame(id) {
   save();
   render();
 }
-function setCycleDone(id, key) {
+function setGameArchived(id, archived) {
   const g = state.games.find(x => x.id === id);
   if (!g) return;
+  g.archived = archived === true;
+  pendingMove.delete(id);
+  save();
+  render();
+}
+function setCycleDone(id, key) {
+  const g = state.games.find(x => x.id === id);
+  if (!g || g.archived) return;
   const i = g.history.indexOf(key);
   if (i >= 0) {
     g.history.splice(i, 1);
@@ -1606,13 +1670,13 @@ function setCycleDone(id, key) {
 function toggleLogin(id) {
   if (!syncReady) return; // wait for the first sync so we don't act on stale data
   const g = state.games.find(x => x.id === id);
-  if (!g) return;
+  if (!g || g.archived) return;
   setCycleDone(id, cycleKey(new Date(), g));
 }
 function checkInYesterday(id) {
   if (!syncReady) return;
   const g = state.games.find(x => x.id === id);
-  if (!g) return;
+  if (!g || g.archived) return;
   setCycleDone(id, prevDayKey(cycleKey(new Date(), g)));
 }
 
@@ -1717,6 +1781,7 @@ function el(tag, attrs, children) {
 const ICONS = {
   star: ['0 0 16 16', '<path fill="currentColor" d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3l-3.8 2 .7-4.3-3.1-3 4.3-.6L8 1.5z"/>'],
   stack: ['0 0 16 16', '<rect x="2.5" y="2.5" width="11" height="4.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="2.5" y="9" width="11" height="4.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>'],
+  archive: ['0 0 16 16', '<path d="M2.5 5.5h11v7.5h-11z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M1.5 2.5h13v3h-13z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6 8h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'],
   flame: ['0 0 12 14', '<path fill="currentColor" d="M6 0c.5 2.5-1.5 3.5-2.5 5C2.5 6.3 2 7.5 2 9a4 4 0 0 0 8 0c0-2-1-3.4-2-4.6-.3.9-.8 1.5-1.5 1.9C7 4.5 7.5 2 6 0z"/>'],
 };
 function svgIcon(name, cls) {
@@ -1754,21 +1819,24 @@ function renderSidebar() {
     btn.classList.toggle('active', btn.dataset.view === state.view);
   });
   const now = new Date();
-  const remaining = state.games.filter(g => getStatus(g, now) === 'available').length;
+  const active = activeGames();
+  const archived = archivedGames();
+  const remaining = active.filter(g => getStatus(g, now) === 'available').length;
   document.querySelector('[data-count="today"]').textContent = remaining;
-  document.querySelector('[data-count="all"]').textContent = state.games.length;
+  document.querySelector('[data-count="all"]').textContent = active.length;
+  document.querySelector('[data-count="archived"]').textContent = archived.length;
 
-  // Game list as "projects" in sidebar
+  // Game list as "projects" in sidebar. Archived games live in their own view.
   const section = document.getElementById('games-section');
   const list = document.getElementById('games-list');
   list.innerHTML = '';
-  if (state.games.length === 0) {
+  if (active.length === 0) {
     section.hidden = true;
     return;
   }
   section.hidden = false;
   // Render in user-defined order (matches main list; drag-to-reorder stays in sync)
-  state.games.forEach(g => {
+  active.forEach(g => {
     const status = getStatus(g, now);
     const streak = getStreak(g, now);
     const btn = el('button', { class: `game-nav ${status}`, type: 'button', dataset: { id: g.id } });
@@ -1794,23 +1862,34 @@ function renderMain() {
   const subtitleEl = document.getElementById('view-subtitle');
 
   const isAll = state.view === 'all';
-  setViewTitle(titleEl, isAll);
-  if (state.games.length === 0) {
+  const isArchived = state.view === 'archived';
+  const games = isArchived ? archivedGames() : activeGames();
+  setViewTitle(titleEl, state.view);
+  if (games.length === 0) {
     subtitleEl.textContent = '';
     sectionsEl.innerHTML = '';
-    sectionsEl.appendChild(renderEmpty());
+    sectionsEl.appendChild(renderEmpty(state.view));
     return;
   }
 
   const now = new Date();
   sectionsEl.innerHTML = '';
 
+  if (isArchived) {
+    const n = games.length;
+    subtitleEl.textContent = `${n} archived game${n === 1 ? '' : 's'}`;
+    const list = el('div', { class: 'game-list' });
+    games.forEach(g => list.appendChild(renderGameCard(g)));
+    sectionsEl.appendChild(el('div', { class: 'section' }, list));
+    return;
+  }
+
   if (isAll) {
     // Flat list in user-defined order — the canonical drag-reorder surface.
-    const n = state.games.length;
+    const n = games.length;
     subtitleEl.textContent = `${n} game${n === 1 ? '' : 's'}`;
     const list = el('div', { class: 'game-list' });
-    state.games.forEach(g => list.appendChild(renderGameCard(g)));
+    games.forEach(g => list.appendChild(renderGameCard(g)));
     sectionsEl.appendChild(el('div', { class: 'section' }, list));
     return;
   }
@@ -1818,7 +1897,7 @@ function renderMain() {
   subtitleEl.textContent = formatDate(now);
 
   const buckets = { available: [], done: [] };
-  state.games.forEach(g => {
+  games.forEach(g => {
     const status = getStatus(g, now);
     // Freshly checked rows linger in place until the check animation lands
     buckets[status === 'done' && pendingMove.has(g.id) ? 'available' : status].push(g);
@@ -1837,10 +1916,16 @@ function formatDate(d) {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-function setViewTitle(titleEl, isAll) {
+function setViewTitle(titleEl, view) {
+  const views = {
+    today: { icon: 'star', cls: 'star', label: 'Today' },
+    all: { icon: 'stack', cls: 'stack', label: 'All Games' },
+    archived: { icon: 'archive', cls: 'archive', label: 'Archived' },
+  };
+  const meta = views[view] || views.today;
   titleEl.textContent = '';
-  titleEl.appendChild(isAll ? svgIcon('stack', 'title-icon stack') : svgIcon('star', 'title-icon star'));
-  titleEl.appendChild(document.createTextNode(isAll ? 'All Games' : 'Today'));
+  titleEl.appendChild(svgIcon(meta.icon, `title-icon ${meta.cls}`));
+  titleEl.appendChild(document.createTextNode(meta.label));
 }
 
 function renderSection(title, count, games) {
@@ -1856,44 +1941,51 @@ function renderSection(title, count, games) {
 }
 
 function renderGameCard(g) {
+  const archived = g.archived === true;
   const now = new Date();
-  const status = getStatus(g, now);
-  const countdown = formatResetCountdown(now, g);
-  const streak = getStreak(g, now);
+  const status = archived ? 'archived' : getStatus(g, now);
+  const countdown = archived ? null : formatResetCountdown(now, g);
+  const streak = archived ? 0 : getStreak(g, now);
   const resetLabel = formatResetTime(g);
 
   const card = el('div', {
-    class: `game-card ${status === 'done' ? 'done' : ''}`,
+    class: `game-card ${status === 'done' ? 'done' : ''} ${archived ? 'archived' : ''}`.trim(),
     dataset: { id: g.id },
     role: 'button',
     tabindex: '0',
   });
-  attachDragHandlers(card);
+  if (!archived) attachDragHandlers(card);
 
-  const checkbox = el('div', {
-    class: `checkbox ${status === 'done' ? 'done' : ''}`,
-    role: 'checkbox',
-    tabindex: '0',
-    'aria-checked': status === 'done' ? 'true' : 'false',
-    'aria-label': status === 'done' ? 'Mark not done' : 'Mark logged in today',
-  });
-  const hit = el('div', { class: 'checkbox-hit' }, checkbox);
-  hit.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleLogin(g.id);
-  });
-  checkbox.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
+  if (archived) {
+    const marker = el('div', { class: 'archive-mark', 'aria-hidden': 'true' });
+    marker.appendChild(svgIcon('archive', 'archive-icon'));
+    card.appendChild(marker);
+  } else {
+    const checkbox = el('div', {
+      class: `checkbox ${status === 'done' ? 'done' : ''}`,
+      role: 'checkbox',
+      tabindex: '0',
+      'aria-checked': status === 'done' ? 'true' : 'false',
+      'aria-label': status === 'done' ? 'Mark not done' : 'Mark logged in today',
+    });
+    const hit = el('div', { class: 'checkbox-hit' }, checkbox);
+    hit.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleLogin(g.id);
-    }
-  });
-  card.appendChild(hit);
+    });
+    checkbox.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleLogin(g.id);
+      }
+    });
+    card.appendChild(hit);
+  }
 
   const info = el('div', { class: 'game-info' });
   info.appendChild(el('div', { class: 'game-name' }, g.name));
-  const meta = el('div', { class: 'game-meta' }, [resetLabel]);
+  const meta = el('div', { class: 'game-meta' }, [archived ? 'Login history preserved' : resetLabel]);
   if (g.note) {
     meta.appendChild(el('span', { class: 'meta-sep' }));
     meta.appendChild(el('span', { class: 'meta-note' }, g.note));
@@ -1902,26 +1994,40 @@ function renderGameCard(g) {
   card.appendChild(info);
 
   const right = el('div', { class: 'game-right' });
-  if (streak > 0) {
-    const s = el('div', { class: 'streak' });
-    s.appendChild(streakBadge(streak, 'flame'));
-    right.appendChild(s);
-  } else {
-    right.appendChild(el('div', { class: 'streak zero' }, '—'));
-  }
-  right.appendChild(el('div', { class: `reset-in ${countdown.cls}` }, countdown.text));
-  const yKey = prevDayKey(cycleKey(now, g));
-  if (!g.history.includes(yKey)) {
-    const retro = el('button', {
-      class: 'retro-btn',
+  if (archived) {
+    right.appendChild(el('div', { class: 'archive-label' }, 'Archived'));
+    const restore = el('button', {
+      class: 'restore-btn',
       type: 'button',
-      title: 'Mark yesterday as logged in',
-    }, '+ yesterday');
-    retro.addEventListener('click', (e) => {
+      title: 'Restore game',
+    }, 'Restore');
+    restore.addEventListener('click', (e) => {
       e.stopPropagation();
-      checkInYesterday(g.id);
+      setGameArchived(g.id, false);
     });
-    right.appendChild(retro);
+    right.appendChild(restore);
+  } else {
+    if (streak > 0) {
+      const s = el('div', { class: 'streak' });
+      s.appendChild(streakBadge(streak, 'flame'));
+      right.appendChild(s);
+    } else {
+      right.appendChild(el('div', { class: 'streak zero' }, '—'));
+    }
+    right.appendChild(el('div', { class: `reset-in ${countdown.cls}` }, countdown.text));
+    const yKey = prevDayKey(cycleKey(now, g));
+    if (!g.history.includes(yKey)) {
+      const retro = el('button', {
+        class: 'retro-btn',
+        type: 'button',
+        title: 'Mark yesterday as logged in',
+      }, '+ yesterday');
+      retro.addEventListener('click', (e) => {
+        e.stopPropagation();
+        checkInYesterday(g.id);
+      });
+      right.appendChild(retro);
+    }
   }
   card.appendChild(right);
 
@@ -1937,8 +2043,16 @@ function renderGameCard(g) {
   return card;
 }
 
-function renderEmpty() {
-  return el('div', { class: 'empty-state' }, [
+function renderEmpty(view = state.view) {
+  const isArchived = view === 'archived';
+  const hasAnyGames = state.games.length > 0;
+  const title = isArchived ? 'No archived games' : hasAnyGames ? 'No active games' : 'No games yet';
+  const message = isArchived
+    ? 'Games you archive will stay here with their login history intact.'
+    : hasAnyGames
+      ? 'Restore a game from Archived, or add a new game.'
+      : 'Add the gacha games you play. Each one resets daily at the time you set — no more midnight drift.';
+  const children = [
     // Things-style empty glyph: a single empty checkbox
     (() => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -1951,10 +2065,13 @@ function renderEmpty() {
       `;
       return svg;
     })(),
-    el('h3', null, 'No games yet'),
-    el('p', null, 'Add the gacha games you play. Each one resets daily at the time you set — no more midnight drift.'),
-    el('button', { onclick: () => openModal() }, '+ Add your first game'),
-  ]);
+    el('h3', null, title),
+    el('p', null, message),
+  ];
+  if (!isArchived) {
+    children.push(el('button', { onclick: () => openModal() }, hasAnyGames ? '+ Add Game' : '+ Add your first game'));
+  }
+  return el('div', { class: 'empty-state' }, children);
 }
 
 /* ============================================================
@@ -1990,6 +2107,9 @@ function openModal(id) {
 
   document.getElementById('modal-title').textContent = game ? 'Edit Game' : 'Add Game';
   document.getElementById('btn-delete').hidden = !game;
+  const archiveBtn = document.getElementById('btn-archive');
+  archiveBtn.hidden = !game;
+  archiveBtn.textContent = game?.archived ? 'Restore' : 'Archive';
 
   const form = document.getElementById('game-form');
   form.reset();
@@ -2002,7 +2122,7 @@ function openModal(id) {
 
   populateTimezones(game ? (game.timezone || '') : '');
 
-  document.getElementById('yesterday-group').hidden = !game;
+  document.getElementById('yesterday-group').hidden = !game || game.archived;
   if (game) refreshYesterdayToggle(game);
 
   populateSwatches(game?.color || COLORS[0]);
@@ -2118,6 +2238,14 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     openModal();
   }
+});
+
+document.getElementById('btn-archive').addEventListener('click', () => {
+  if (!editingId) return;
+  const game = state.games.find(g => g.id === editingId);
+  if (!game) return;
+  setGameArchived(editingId, !game.archived);
+  closeModal();
 });
 
 document.getElementById('btn-delete').addEventListener('click', () => {
