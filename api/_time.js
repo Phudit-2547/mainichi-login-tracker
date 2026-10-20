@@ -2,7 +2,7 @@
 // functions in index.html (keep the two in sync). A game's daily cycle is
 // identified by the calendar date (in the game's zone) of its start.
 
-function zonedParts(date, timeZone) {
+export function zonedParts(date, timeZone) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone, hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit',

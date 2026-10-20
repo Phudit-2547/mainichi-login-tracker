@@ -2,6 +2,14 @@
 //   GET    /api/push                     → { publicKey }
 //   POST   /api/push { subscription, device_id?, timezone? }  (or Bearer) → { ok }
 //   DELETE /api/push { endpoint, device_id? }                 (or Bearer) → { ok }
+//   PATCH  /api/push { endpoint, digestHour?, quietStart?, quietEnd?, device_id? }
+//          (or Bearer) → { ok, settings }
+//          digestHour: 0-23 device-local hour for the daily summary, null = off
+//          (default 22). quietStart/quietEnd: device-local hours, quietStart
+//          null = off (default 00-07); reminders that would fire inside quiet
+//          hours are sent before they start instead.
+//          Separate from POST on purpose: the service worker re-POSTs the
+//          subscription on every sync, and that must never reset this setting.
 //
 // Subscriptions are keyed to the same data_key the sync row uses. Timezone
 // is stored per subscription so "Follow this device" reminders stay correct
@@ -29,6 +37,12 @@ export function ensurePushSchema() {
     `;
     // Safe migration for databases created before per-device timezones.
     await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS timezone TEXT`;
+    // Daily summary: device-local hour (0-23) or NULL when off. Default 22:00
+    // is after the usual evening check-ins and before every game's next reset.
+    await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS digest_hour SMALLINT DEFAULT 22`;
+    // Quiet hours (device-local). quiet_start NULL = off.
+    await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS quiet_start SMALLINT DEFAULT 0`;
+    await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS quiet_end SMALLINT DEFAULT 7`;
     await sql`CREATE INDEX IF NOT EXISTS push_subs_key_idx ON push_subs(data_key)`;
 
     // Legacy account-level delivery log. Kept for migration/compatibility;
@@ -154,6 +168,13 @@ async function resolveDataKey(req, body) {
   return isValidSyncCode(code) ? code : null;
 }
 
+function toSettings(row) {
+  const n = (v) => (v === null || v === undefined ? null : Number(v));
+  return row
+    ? { digestHour: n(row.digest_hour), quietStart: n(row.quiet_start), quietEnd: n(row.quiet_end) }
+    : { digestHour: 22, quietStart: 0, quietEnd: 7 };
+}
+
 function validTimezone(value) {
   if (typeof value !== 'string' || !value || value.length > 100) return null;
   try {
@@ -202,18 +223,43 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'subscription with endpoint required' });
     }
     const timezone = validTimezone(body.timezone);
-    await sql`
+    const saved = await sql`
       INSERT INTO push_subs (endpoint, data_key, sub, timezone, created_at)
       VALUES (${sub.endpoint}, ${dataKey}, ${JSON.stringify(sub)}::jsonb, ${timezone}, NOW())
       ON CONFLICT (endpoint) DO UPDATE
         SET data_key = EXCLUDED.data_key,
             sub = EXCLUDED.sub,
             timezone = COALESCE(EXCLUDED.timezone, push_subs.timezone)
+      RETURNING digest_hour, quiet_start, quiet_end
     `;
     // If this browser moved to another identity, old delivery markers are no
     // longer relevant to the endpoint and would otherwise linger for a week.
     await sql`DELETE FROM push_delivery WHERE endpoint = ${sub.endpoint} AND data_key <> ${dataKey}`;
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, settings: toSettings(saved[0]) });
+  }
+
+  if (req.method === 'PATCH') {
+    if (typeof body.endpoint !== 'string') return res.status(400).json({ error: 'endpoint required' });
+    const hour = (v) => v === null ? null : (Number.isInteger(v) && v >= 0 && v <= 23 ? v : undefined);
+    const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    const digestHour = has('digestHour') ? hour(body.digestHour) : undefined;
+    const quietStart = has('quietStart') ? hour(body.quietStart) : undefined;
+    const quietEnd = has('quietEnd') ? hour(body.quietEnd) : undefined;
+    if ((has('digestHour') && digestHour === undefined) ||
+        (has('quietStart') && quietStart === undefined) ||
+        (has('quietEnd') && (quietEnd === undefined || quietEnd === null))) {
+      return res.status(400).json({ error: 'hours must be 0-23 (digestHour/quietStart may be null = off)' });
+    }
+    if (!has('digestHour') && !has('quietStart') && !has('quietEnd')) {
+      return res.status(400).json({ error: 'nothing to update' });
+    }
+    const exists = await sql`SELECT 1 FROM push_subs WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    if (exists.length === 0) return res.status(404).json({ error: 'turn on notifications for this device first' });
+    if (has('digestHour')) await sql`UPDATE push_subs SET digest_hour = ${digestHour} WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    if (has('quietStart')) await sql`UPDATE push_subs SET quiet_start = ${quietStart} WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    if (has('quietEnd')) await sql`UPDATE push_subs SET quiet_end = ${quietEnd} WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    const row = await sql`SELECT digest_hour, quiet_start, quiet_end FROM push_subs WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}`;
+    return res.status(200).json({ ok: true, settings: toSettings(row[0]) });
   }
 
   if (req.method === 'DELETE') {

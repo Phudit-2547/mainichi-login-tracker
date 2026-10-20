@@ -9,24 +9,46 @@
 import webpush from 'web-push';
 import { db } from './_lib.js';
 import { ensurePushSchema, getVapid } from './push.js';
-import { cycleKey, nextCycleStart, streak } from './_time.js';
+import { cycleKey, nextCycleStart, streak, zonedParts } from './_time.js';
 
 const configuredLead = Number(process.env.NOTIFY_LEAD_MINUTES);
 const LEAD_MINUTES = Number.isFinite(configuredLead) && configuredLead > 0 ? configuredLead : 90;
 const configuredGate = Number(process.env.NOTIFY_MIN_INTERVAL_MINUTES);
 const MIN_RUN_INTERVAL_MINUTES = Number.isFinite(configuredGate) && configuredGate > 0 ? configuredGate : 30;
 
-export function collectDueGames(games, now, deviceTz, delivered = new Set(), leadMinutes = LEAD_MINUTES) {
+// Quiet hours (device-local, may wrap midnight). quiet = {start, end} in
+// hours, or null/start===end for off. Minutes since local midnight in.
+export function quietInfo(now, tz, quiet) {
+  if (!quiet || !Number.isInteger(quiet.start) || !Number.isInteger(quiet.end) || quiet.start === quiet.end) return null;
+  let p;
+  try { p = zonedParts(now, tz || 'UTC'); } catch { p = zonedParts(now, 'UTC'); }
+  const local = p.hour * 60 + p.minute;
+  const start = quiet.start * 60, end = quiet.end * 60;
+  const inside = start < end ? (local >= start && local < end) : (local >= start || local < end);
+  const minsToStart = (start - local + 1440) % 1440;     // 0 when exactly at start
+  const length = (end - start + 1440) % 1440;
+  return { inside, minsToStart, length };
+}
+
+export function collectDueGames(games, now, deviceTz, delivered = new Set(), leadMinutes = LEAD_MINUTES, quiet = null) {
+  const q = quietInfo(now, deviceTz, quiet);
+  if (q && q.inside) return [];                           // never ping while asleep
+  // Last awake run before quiet hours: also send for resets that would land
+  // inside them (their normal reminder would fire while you're asleep, and by
+  // wake-up the game has already reset).
+  const preQuiet = q && q.minsToStart > 0 && q.minsToStart <= leadMinutes;
   const due = [];
   for (const g of Array.isArray(games) ? games : []) {
     if (!g || g.archived === true || typeof g.id !== 'string' ||
         !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
     const key = cycleKey(now, g, deviceTz);
     if (Array.isArray(g.history) && g.history.includes(key)) continue;
-    if (delivered.has(`${g.id}
-${key}`)) continue;
+    if (delivered.has(`${g.id}\n${key}`)) continue;
     const msLeft = nextCycleStart(now, g, deviceTz) - now.getTime();
-    if (msLeft <= 0 || msLeft > leadMinutes * 60 * 1000) continue;
+    if (msLeft <= 0) continue;
+    const normal = msLeft <= leadMinutes * 60 * 1000;
+    const pulled = preQuiet && msLeft <= (q.minsToStart + q.length) * 60 * 1000;
+    if (!normal && !pulled) continue;
     due.push({
       game: g,
       key,
@@ -35,6 +57,49 @@ ${key}`)) continue;
     });
   }
   return due;
+}
+
+export function formatLeft(m) {
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
+// Daily summary: every active game split into checked / not-yet-checked for
+// its current cycle. Including the CHECKED ones is the point — it surfaces a
+// tick you didn't mean to make (the app can't see inside the games).
+export function collectDigest(games, now, deviceTz) {
+  const done = [], left = [];
+  for (const g of Array.isArray(games) ? games : []) {
+    if (!g || g.archived === true || typeof g.id !== 'string' ||
+        !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
+    const key = cycleKey(now, g, deviceTz);
+    const checked = Array.isArray(g.history) && g.history.includes(key);
+    (checked ? done : left).push(g.name || 'Unnamed');
+  }
+  return { done, left };
+}
+
+// The digest is due once the device-local clock has reached digestHour; it is
+// deduped per device-local calendar date. Returns that date key, or null.
+export function digestDayKey(now, tz, digestHour) {
+  if (!Number.isInteger(digestHour) || digestHour < 0 || digestHour > 23) return null;
+  let p;
+  try { p = zonedParts(now, tz || 'UTC'); } catch { p = zonedParts(now, 'UTC'); }
+  if (p.hour < digestHour) return null;
+  const pad = n => String(n).padStart(2, '0');
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+}
+
+export function buildDigestMessage({ done, left }) {
+  const total = done.length + left.length;
+  const lines = [];
+  if (done.length) lines.push(`\u2713 ${done.join(', ')}`);
+  if (left.length) lines.push(`\u2717 ${left.join(', ')}`);
+  const title = left.length === 0
+    ? `Mainichi — all ${total} checked today`
+    : `Mainichi — ${done.length}/${total} checked today`;
+  return { title, body: lines.join('\n'), tag: 'mainichi-digest' };
 }
 
 export default async function handler(req, res) {
@@ -103,6 +168,7 @@ export default async function handler(req, res) {
       dry,
       subscriptions: 0,
       dueSubscriptions: 0,
+      digestSubscriptions: 0,
       sent: 0,
       pruned: 0,
       failed: 0,
@@ -112,7 +178,7 @@ export default async function handler(req, res) {
     // evaluated in that subscription's timezone, not whichever device synced
     // the account most recently.
     const rows = await sql`
-      SELECT s.endpoint, s.data_key, s.sub, s.timezone, g.payload
+      SELECT s.endpoint, s.data_key, s.sub, s.timezone, s.digest_hour, s.quiet_start, s.quiet_end, g.payload
       FROM push_subs s
       LEFT JOIN gacha_data g ON g.device_id = s.data_key
     `;
@@ -134,7 +200,41 @@ export default async function handler(req, res) {
       `;
       const delivered = new Set(deliveredRows.map(r => `${r.game_id}\n${r.cycle_key}`));
 
-      const due = collectDueGames(games, now, deviceTz, delivered);
+      const quiet = row.quiet_start == null ? null
+        : { start: Number(row.quiet_start), end: Number(row.quiet_end ?? 7) };
+      const due = collectDueGames(games, now, deviceTz, delivered, LEAD_MINUTES, quiet);
+
+      // Daily summary (independent of reset reminders, sent even when every
+      // game is checked — that's when a mistaken tick would otherwise hide).
+      const digestHour = row.digest_hour == null ? null : Number(row.digest_hour);
+      const digestDay = digestDayKey(now, deviceTz, digestHour);
+      if (digestDay && !delivered.has(`__digest__\n${digestDay}`)) {
+        const digest = collectDigest(games, now, deviceTz);
+        if (digest.done.length + digest.left.length > 0) {
+          report.digestSubscriptions++;
+          if (!dry) {
+            try {
+              await webpush.sendNotification(row.sub, JSON.stringify(buildDigestMessage(digest)), { TTL: 3600 });
+              await sql`
+                INSERT INTO push_delivery (endpoint, data_key, game_id, cycle_key, sent_at)
+                VALUES (${row.endpoint}, ${row.data_key}, '__digest__', ${digestDay}, NOW())
+                ON CONFLICT DO NOTHING
+              `;
+              report.sent++;
+            } catch (e) {
+              if (e.statusCode === 404 || e.statusCode === 410) {
+                await sql`DELETE FROM push_subs WHERE endpoint = ${row.endpoint}`;
+                await sql`DELETE FROM push_delivery WHERE endpoint = ${row.endpoint}`;
+                report.pruned++;
+                continue; // subscription is gone; skip its reminders too
+              }
+              report.failed++;
+              console.warn('[notify] digest send failed:', e.statusCode || e.message);
+            }
+          }
+        }
+      }
+
       if (due.length === 0) continue;
 
       report.dueSubscriptions++;
@@ -211,7 +311,7 @@ function buildMessage(due) {
     const flame = d.streak > 0 ? ` — \u{1F525} ${d.streak}-day streak on the line` : '';
     return {
       title: 'Mainichi',
-      body: `${d.game.name} resets in ${d.minutesLeft}m and you haven't logged in${flame}`,
+      body: `${d.game.name} resets in ${formatLeft(d.minutesLeft)} and you haven't logged in${flame}`,
       tag: 'mainichi-reset',
     };
   }
@@ -219,7 +319,7 @@ function buildMessage(due) {
   const soonest = Math.min(...due.map(d => d.minutesLeft));
   return {
     title: 'Mainichi',
-    body: `${due.length} games reset soon (first in ${soonest}m): ${names}`,
+    body: `${due.length} games still unchecked (first resets in ${formatLeft(soonest)}): ${names}`,
     tag: 'mainichi-reset',
   };
 }

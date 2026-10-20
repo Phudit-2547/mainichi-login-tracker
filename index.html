@@ -459,6 +459,42 @@
   .bell-btn.on .bell-on { display: block; }
   .bell-btn.on .bell-off { display: none; }
   .bell-btn.denied { color: var(--text-faint); cursor: not-allowed; }
+  .header-actions { position: relative; }
+  .bell-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    width: 280px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+    font-size: 13px;
+  }
+  .bell-menu[hidden] { display: none; }
+  .bell-menu-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px;
+  }
+  .bell-menu-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 6px 0; color: var(--text);
+  }
+  .bell-menu-on { color: var(--success); font-weight: 500; }
+  .bell-menu-pair { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }
+  .bell-menu select {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border-strong); border-radius: 6px;
+    padding: 4px 6px; font: inherit;
+  }
+  .bell-menu-hint { font-size: 11px; color: var(--text-muted); line-height: 1.4; margin: 2px 0 10px; }
+  .bell-menu-off {
+    width: 100%; padding: 7px 10px; border-radius: 6px;
+    color: var(--danger); background: var(--row-hover); font-size: 12.5px;
+  }
+  .bell-menu-off:hover { background: var(--row-active); }
 
   .main-header {
     padding: 28px 0 14px;
@@ -1120,6 +1156,27 @@
                 <path d="M13.7 20a2 2 0 0 1-3.4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
             </button>
+            <div class="bell-menu" id="bell-menu" role="dialog" aria-label="Notification settings" hidden>
+              <div class="bell-menu-title">Notifications</div>
+              <div class="bell-menu-row">
+                <span>Reset reminders</span><span class="bell-menu-on">On</span>
+              </div>
+              <label class="bell-menu-row" for="digest-hour">
+                <span>Daily summary</span>
+                <select id="digest-hour"></select>
+              </label>
+              <div class="bell-menu-hint">A recap of what's checked and what's left, sent around this time every day — handy for catching a tick you didn't mean.</div>
+              <div class="bell-menu-row">
+                <span>Quiet hours</span>
+                <span class="bell-menu-pair">
+                  <select id="quiet-start" aria-label="Quiet hours start"></select>
+                  <span id="quiet-dash">–</span>
+                  <select id="quiet-end" aria-label="Quiet hours end"></select>
+                </span>
+              </div>
+              <div class="bell-menu-hint">No pings while you sleep. Reminders for resets during quiet hours come at your last check before they start.</div>
+              <button class="bell-menu-off" id="bell-menu-off" type="button">Turn off notifications on this device</button>
+            </div>
           </div>
         </div>
       </header>
@@ -2354,7 +2411,7 @@ async function refreshBell() {
   bell.classList.toggle('denied', Notification.permission === 'denied');
   bell.title = Notification.permission === 'denied'
     ? 'Notifications are blocked in your browser settings'
-    : on ? 'Reset reminders on — tap to turn off'
+    : on ? 'Notifications on — tap for settings'
     : 'Remind me before a reset I haven’t checked in for';
 }
 
@@ -2362,15 +2419,106 @@ function pushAuthBody() {
   return session ? {} : { device_id: syncCode };
 }
 
-async function onBellClick() {
+const PUSH_SETTINGS_KEY = 'gacha-push-settings-v1';
+// Server defaults: daily summary 22:00, quiet hours 00:00–07:00 (device-local).
+const DEFAULT_PUSH_SETTINGS = { digestHour: 22, quietStart: 0, quietEnd: 7 };
+
+async function onBellClick(e) {
+  e.stopPropagation();
   const bell = document.getElementById('bell-btn');
   if (bell.classList.contains('on')) {
-    if (!confirm('Turn off reset reminders on this device?')) return;
-    await disablePush();
+    toggleBellMenu();
     return;
   }
   await enablePush();
+  // Open the menu right after enabling so the daily summary is discoverable.
+  if (bell.classList.contains('on')) toggleBellMenu(true);
 }
+
+function toggleBellMenu(force) {
+  const menu = document.getElementById('bell-menu');
+  const open = typeof force === 'boolean' ? force : menu.hidden;
+  if (open) populatePushSettings();
+  menu.hidden = !open;
+}
+
+function savedPushSettings() {
+  try {
+    const v = JSON.parse(localStorage.getItem(PUSH_SETTINGS_KEY));
+    if (v && typeof v === 'object') return { ...DEFAULT_PUSH_SETTINGS, ...v };
+  } catch (e) { /* fall through */ }
+  return { ...DEFAULT_PUSH_SETTINGS };
+}
+
+function storePushSettings(settings) {
+  if (!settings) return;
+  try { localStorage.setItem(PUSH_SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
+}
+
+function fillHours(sel, withOff) {
+  if (sel.options.length) return;
+  if (withOff) sel.appendChild(el('option', { value: '' }, 'Off'));
+  for (let h = 0; h < 24; h++) sel.appendChild(el('option', { value: String(h) }, `${pad2(h)}:00`));
+}
+
+function populatePushSettings() {
+  const st = savedPushSettings();
+  const digest = document.getElementById('digest-hour');
+  const qs = document.getElementById('quiet-start');
+  const qe = document.getElementById('quiet-end');
+  fillHours(digest, true); fillHours(qs, true); fillHours(qe, false);
+  digest.value = st.digestHour === null ? '' : String(st.digestHour);
+  qs.value = st.quietStart === null ? '' : String(st.quietStart);
+  qe.value = String(st.quietEnd ?? 7);
+  const off = st.quietStart === null;
+  qe.hidden = off;
+  document.getElementById('quiet-dash').hidden = off;
+}
+
+async function patchPushSettings(fields) {
+  const previous = savedPushSettings();
+  try {
+    const sub = await swReg.pushManager.getSubscription();
+    if (!sub) throw new Error('turn on notifications first');
+    const res = await fetch('/api/push', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ endpoint: sub.endpoint, ...fields, ...pushAuthBody() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    storePushSettings(data.settings || { ...previous, ...fields });
+  } catch (e) {
+    storePushSettings(previous);
+    alert('Could not update notification settings: ' + ((e && e.message) || e));
+  }
+  populatePushSettings();
+}
+
+function onDigestChange() {
+  const v = document.getElementById('digest-hour').value;
+  patchPushSettings({ digestHour: v === '' ? null : Number(v) });
+}
+
+function onQuietChange() {
+  const s = document.getElementById('quiet-start').value;
+  const e = document.getElementById('quiet-end').value;
+  patchPushSettings({ quietStart: s === '' ? null : Number(s), quietEnd: Number(e) });
+}
+
+document.getElementById('quiet-start').addEventListener('change', onQuietChange);
+document.getElementById('quiet-end').addEventListener('change', onQuietChange);
+document.getElementById('digest-hour').addEventListener('change', onDigestChange);
+document.getElementById('bell-menu-off').addEventListener('click', async () => {
+  if (!confirm('Turn off all notifications on this device?')) return;
+  toggleBellMenu(false);
+  await disablePush();
+});
+document.getElementById('bell-menu').addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => { document.getElementById('bell-menu').hidden = true; });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.getElementById('bell-menu').hidden = true;
+});
 
 async function enablePush() {
   if (!canSync()) {
@@ -2391,8 +2539,9 @@ async function enablePush() {
       userVisibleOnly: true,
       applicationServerKey: b64uToBuf(keyData.publicKey),
     });
-    await apiPost('/api/push', { subscription: sub.toJSON(), ...pushAuthBody() }, authHeaders());
-    refreshBell();
+    const saved = await apiPost('/api/push', { subscription: sub.toJSON(), ...pushAuthBody() }, authHeaders());
+    storePushSettings(saved && saved.settings);
+    await refreshBell();
   } catch (e) {
     alert('Could not enable reminders: ' + ((e && e.message) || e));
     refreshBell();
@@ -2413,6 +2562,7 @@ async function disablePush() {
       await sub.unsubscribe();
     }
   } catch (e) { /* ignore */ }
+  try { localStorage.removeItem(PUSH_SETTINGS_KEY); } catch (e) { /* ignore */ }
   refreshBell();
 }
 
