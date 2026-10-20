@@ -483,6 +483,7 @@
     gap: 12px; padding: 6px 0; color: var(--text);
   }
   .bell-menu-on { color: var(--success); font-weight: 500; }
+  .bell-menu-pair { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }
   .bell-menu select {
     background: var(--bg); color: var(--text);
     border: 1px solid var(--border-strong); border-radius: 6px;
@@ -1165,6 +1166,15 @@
                 <select id="digest-hour"></select>
               </label>
               <div class="bell-menu-hint">A recap of what's checked and what's left, sent around this time every day — handy for catching a tick you didn't mean.</div>
+              <div class="bell-menu-row">
+                <span>Quiet hours</span>
+                <span class="bell-menu-pair">
+                  <select id="quiet-start" aria-label="Quiet hours start"></select>
+                  <span id="quiet-dash">–</span>
+                  <select id="quiet-end" aria-label="Quiet hours end"></select>
+                </span>
+              </div>
+              <div class="bell-menu-hint">No pings while you sleep. Reminders for resets during quiet hours come at your last check before they start.</div>
               <button class="bell-menu-off" id="bell-menu-off" type="button">Turn off notifications on this device</button>
             </div>
           </div>
@@ -2409,7 +2419,9 @@ function pushAuthBody() {
   return session ? {} : { device_id: syncCode };
 }
 
-const DIGEST_KEY = 'gacha-digest-hour-v1';
+const PUSH_SETTINGS_KEY = 'gacha-push-settings-v1';
+// Server defaults: daily summary 22:00, quiet hours 00:00–07:00 (device-local).
+const DEFAULT_PUSH_SETTINGS = { digestHour: 22, quietStart: 0, quietEnd: 7 };
 
 async function onBellClick(e) {
   e.stopPropagation();
@@ -2426,51 +2438,76 @@ async function onBellClick(e) {
 function toggleBellMenu(force) {
   const menu = document.getElementById('bell-menu');
   const open = typeof force === 'boolean' ? force : menu.hidden;
-  if (open) populateDigestSelect();
+  if (open) populatePushSettings();
   menu.hidden = !open;
 }
 
-function savedDigestHour() {
+function savedPushSettings() {
   try {
-    const v = localStorage.getItem(DIGEST_KEY);
-    return v === null || v === '' ? null : Number(v);
-  } catch (e) { return null; }
+    const v = JSON.parse(localStorage.getItem(PUSH_SETTINGS_KEY));
+    if (v && typeof v === 'object') return { ...DEFAULT_PUSH_SETTINGS, ...v };
+  } catch (e) { /* fall through */ }
+  return { ...DEFAULT_PUSH_SETTINGS };
 }
 
-function populateDigestSelect() {
-  const sel = document.getElementById('digest-hour');
-  if (sel.options.length === 0) {
-    sel.appendChild(el('option', { value: '' }, 'Off'));
-    for (let h = 0; h < 24; h++) sel.appendChild(el('option', { value: String(h) }, `${pad2(h)}:00`));
-  }
-  const h = savedDigestHour();
-  sel.value = h === null ? '' : String(h);
+function storePushSettings(settings) {
+  if (!settings) return;
+  try { localStorage.setItem(PUSH_SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
 }
 
-async function onDigestChange() {
-  const sel = document.getElementById('digest-hour');
-  const previous = savedDigestHour();
-  const digestHour = sel.value === '' ? null : Number(sel.value);
+function fillHours(sel, withOff) {
+  if (sel.options.length) return;
+  if (withOff) sel.appendChild(el('option', { value: '' }, 'Off'));
+  for (let h = 0; h < 24; h++) sel.appendChild(el('option', { value: String(h) }, `${pad2(h)}:00`));
+}
+
+function populatePushSettings() {
+  const st = savedPushSettings();
+  const digest = document.getElementById('digest-hour');
+  const qs = document.getElementById('quiet-start');
+  const qe = document.getElementById('quiet-end');
+  fillHours(digest, true); fillHours(qs, true); fillHours(qe, false);
+  digest.value = st.digestHour === null ? '' : String(st.digestHour);
+  qs.value = st.quietStart === null ? '' : String(st.quietStart);
+  qe.value = String(st.quietEnd ?? 7);
+  const off = st.quietStart === null;
+  qe.hidden = off;
+  document.getElementById('quiet-dash').hidden = off;
+}
+
+async function patchPushSettings(fields) {
+  const previous = savedPushSettings();
   try {
     const sub = await swReg.pushManager.getSubscription();
     if (!sub) throw new Error('turn on notifications first');
     const res = await fetch('/api/push', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ endpoint: sub.endpoint, digestHour, ...pushAuthBody() }),
+      body: JSON.stringify({ endpoint: sub.endpoint, ...fields, ...pushAuthBody() }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-    try {
-      if (digestHour === null) localStorage.removeItem(DIGEST_KEY);
-      else localStorage.setItem(DIGEST_KEY, String(digestHour));
-    } catch (e) { /* storage unavailable — server has the setting */ }
+    storePushSettings(data.settings || { ...previous, ...fields });
   } catch (e) {
-    sel.value = previous === null ? '' : String(previous);
-    alert('Could not update the daily summary: ' + ((e && e.message) || e));
+    storePushSettings(previous);
+    alert('Could not update notification settings: ' + ((e && e.message) || e));
   }
+  populatePushSettings();
 }
 
+function onDigestChange() {
+  const v = document.getElementById('digest-hour').value;
+  patchPushSettings({ digestHour: v === '' ? null : Number(v) });
+}
+
+function onQuietChange() {
+  const s = document.getElementById('quiet-start').value;
+  const e = document.getElementById('quiet-end').value;
+  patchPushSettings({ quietStart: s === '' ? null : Number(s), quietEnd: Number(e) });
+}
+
+document.getElementById('quiet-start').addEventListener('change', onQuietChange);
+document.getElementById('quiet-end').addEventListener('change', onQuietChange);
 document.getElementById('digest-hour').addEventListener('change', onDigestChange);
 document.getElementById('bell-menu-off').addEventListener('click', async () => {
   if (!confirm('Turn off all notifications on this device?')) return;
@@ -2502,7 +2539,8 @@ async function enablePush() {
       userVisibleOnly: true,
       applicationServerKey: b64uToBuf(keyData.publicKey),
     });
-    await apiPost('/api/push', { subscription: sub.toJSON(), ...pushAuthBody() }, authHeaders());
+    const saved = await apiPost('/api/push', { subscription: sub.toJSON(), ...pushAuthBody() }, authHeaders());
+    storePushSettings(saved && saved.settings);
     await refreshBell();
   } catch (e) {
     alert('Could not enable reminders: ' + ((e && e.message) || e));
@@ -2524,7 +2562,7 @@ async function disablePush() {
       await sub.unsubscribe();
     }
   } catch (e) { /* ignore */ }
-  try { localStorage.removeItem(DIGEST_KEY); } catch (e) { /* ignore */ }
+  try { localStorage.removeItem(PUSH_SETTINGS_KEY); } catch (e) { /* ignore */ }
   refreshBell();
 }
 
