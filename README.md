@@ -74,6 +74,8 @@ YouTube-style notifications ("Genshin resets in 45m and you haven't logged in �
 
 **iPhone/iPad:** Safari can only receive push from an installed web app — Share → **Add to Home Screen**, open Mainichi from there, then tap the bell (iOS 16.4+, Apple's rule for every website incl. YouTube). Android and desktop work directly.
 
+**Daily summary (optional):** once notifications are on, tap the bell → *Daily summary* and pick an hour. Every day around that time (device-local; the scheduler runs hourly, so allow up to an hour), that device gets one recap listing what's checked and what's left — e.g. *"Mainichi — 2/3 checked today · ✓ Genshin, HSR · ✗ ZZZ"*. It's sent even when everything is checked, because that's exactly when a mistaken tick would otherwise go unnoticed (the app can't see inside the games). Stored per device as `push_subs.digest_hour`, set via `PATCH /api/push`, deduped per local date.
+
 Optional hardening / overrides (env vars on Vercel): `NOTIFY_SECRET` locks `/api/notify` (mirror it in the repo's Actions secrets along with `NOTIFY_URL` if your domain differs from the default); `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` override the self-generated keys; `NOTIFY_LEAD_MINUTES` tunes the reminder lead time; `NOTIFY_MIN_INTERVAL_MINUTES` tunes the server-side scheduler throttle. Note: GitHub pauses scheduled workflows after ~60 days without repo activity; the Actions tab re-enables them in one click.
 
 ## Project layout

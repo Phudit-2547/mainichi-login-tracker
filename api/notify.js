@@ -9,7 +9,7 @@
 import webpush from 'web-push';
 import { db } from './_lib.js';
 import { ensurePushSchema, getVapid } from './push.js';
-import { cycleKey, nextCycleStart, streak } from './_time.js';
+import { cycleKey, nextCycleStart, streak, zonedParts } from './_time.js';
 
 const configuredLead = Number(process.env.NOTIFY_LEAD_MINUTES);
 const LEAD_MINUTES = Number.isFinite(configuredLead) && configuredLead > 0 ? configuredLead : 90;
@@ -35,6 +35,43 @@ ${key}`)) continue;
     });
   }
   return due;
+}
+
+// Daily summary: every active game split into checked / not-yet-checked for
+// its current cycle. Including the CHECKED ones is the point — it surfaces a
+// tick you didn't mean to make (the app can't see inside the games).
+export function collectDigest(games, now, deviceTz) {
+  const done = [], left = [];
+  for (const g of Array.isArray(games) ? games : []) {
+    if (!g || g.archived === true || typeof g.id !== 'string' ||
+        !Number.isInteger(g.resetHour) || !Number.isInteger(g.resetMinute)) continue;
+    const key = cycleKey(now, g, deviceTz);
+    const checked = Array.isArray(g.history) && g.history.includes(key);
+    (checked ? done : left).push(g.name || 'Unnamed');
+  }
+  return { done, left };
+}
+
+// The digest is due once the device-local clock has reached digestHour; it is
+// deduped per device-local calendar date. Returns that date key, or null.
+export function digestDayKey(now, tz, digestHour) {
+  if (!Number.isInteger(digestHour) || digestHour < 0 || digestHour > 23) return null;
+  let p;
+  try { p = zonedParts(now, tz || 'UTC'); } catch { p = zonedParts(now, 'UTC'); }
+  if (p.hour < digestHour) return null;
+  const pad = n => String(n).padStart(2, '0');
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+}
+
+export function buildDigestMessage({ done, left }) {
+  const total = done.length + left.length;
+  const lines = [];
+  if (done.length) lines.push(`\u2713 ${done.join(', ')}`);
+  if (left.length) lines.push(`\u2717 ${left.join(', ')}`);
+  const title = left.length === 0
+    ? `Mainichi — all ${total} checked today`
+    : `Mainichi — ${done.length}/${total} checked today`;
+  return { title, body: lines.join('\n'), tag: 'mainichi-digest' };
 }
 
 export default async function handler(req, res) {
@@ -103,6 +140,7 @@ export default async function handler(req, res) {
       dry,
       subscriptions: 0,
       dueSubscriptions: 0,
+      digestSubscriptions: 0,
       sent: 0,
       pruned: 0,
       failed: 0,
@@ -112,7 +150,7 @@ export default async function handler(req, res) {
     // evaluated in that subscription's timezone, not whichever device synced
     // the account most recently.
     const rows = await sql`
-      SELECT s.endpoint, s.data_key, s.sub, s.timezone, g.payload
+      SELECT s.endpoint, s.data_key, s.sub, s.timezone, s.digest_hour, g.payload
       FROM push_subs s
       LEFT JOIN gacha_data g ON g.device_id = s.data_key
     `;
@@ -135,6 +173,38 @@ export default async function handler(req, res) {
       const delivered = new Set(deliveredRows.map(r => `${r.game_id}\n${r.cycle_key}`));
 
       const due = collectDueGames(games, now, deviceTz, delivered);
+
+      // Daily summary (independent of reset reminders, sent even when every
+      // game is checked — that's when a mistaken tick would otherwise hide).
+      const digestHour = row.digest_hour == null ? null : Number(row.digest_hour);
+      const digestDay = digestDayKey(now, deviceTz, digestHour);
+      if (digestDay && !delivered.has(`__digest__\n${digestDay}`)) {
+        const digest = collectDigest(games, now, deviceTz);
+        if (digest.done.length + digest.left.length > 0) {
+          report.digestSubscriptions++;
+          if (!dry) {
+            try {
+              await webpush.sendNotification(row.sub, JSON.stringify(buildDigestMessage(digest)), { TTL: 3600 });
+              await sql`
+                INSERT INTO push_delivery (endpoint, data_key, game_id, cycle_key, sent_at)
+                VALUES (${row.endpoint}, ${row.data_key}, '__digest__', ${digestDay}, NOW())
+                ON CONFLICT DO NOTHING
+              `;
+              report.sent++;
+            } catch (e) {
+              if (e.statusCode === 404 || e.statusCode === 410) {
+                await sql`DELETE FROM push_subs WHERE endpoint = ${row.endpoint}`;
+                await sql`DELETE FROM push_delivery WHERE endpoint = ${row.endpoint}`;
+                report.pruned++;
+                continue; // subscription is gone; skip its reminders too
+              }
+              report.failed++;
+              console.warn('[notify] digest send failed:', e.statusCode || e.message);
+            }
+          }
+        }
+      }
+
       if (due.length === 0) continue;
 
       report.dueSubscriptions++;

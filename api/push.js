@@ -2,6 +2,10 @@
 //   GET    /api/push                     → { publicKey }
 //   POST   /api/push { subscription, device_id?, timezone? }  (or Bearer) → { ok }
 //   DELETE /api/push { endpoint, device_id? }                 (or Bearer) → { ok }
+//   PATCH  /api/push { endpoint, digestHour, device_id? }     (or Bearer) → { ok, digestHour }
+//          digestHour: 0-23 (device-local hour for the daily summary) or null = off.
+//          Separate from POST on purpose: the service worker re-POSTs the
+//          subscription on every sync, and that must never reset this setting.
 //
 // Subscriptions are keyed to the same data_key the sync row uses. Timezone
 // is stored per subscription so "Follow this device" reminders stay correct
@@ -29,6 +33,8 @@ export function ensurePushSchema() {
     `;
     // Safe migration for databases created before per-device timezones.
     await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS timezone TEXT`;
+    // Daily summary: device-local hour (0-23) or NULL when off.
+    await sql`ALTER TABLE push_subs ADD COLUMN IF NOT EXISTS digest_hour SMALLINT`;
     await sql`CREATE INDEX IF NOT EXISTS push_subs_key_idx ON push_subs(data_key)`;
 
     // Legacy account-level delivery log. Kept for migration/compatibility;
@@ -214,6 +220,20 @@ export default async function handler(req, res) {
     // longer relevant to the endpoint and would otherwise linger for a week.
     await sql`DELETE FROM push_delivery WHERE endpoint = ${sub.endpoint} AND data_key <> ${dataKey}`;
     return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'PATCH') {
+    if (typeof body.endpoint !== 'string') return res.status(400).json({ error: 'endpoint required' });
+    const h = body.digestHour;
+    const digestHour = h === null ? null : (Number.isInteger(h) && h >= 0 && h <= 23 ? h : undefined);
+    if (digestHour === undefined) return res.status(400).json({ error: 'digestHour must be 0-23 or null' });
+    const updated = await sql`
+      UPDATE push_subs SET digest_hour = ${digestHour}
+      WHERE endpoint = ${body.endpoint} AND data_key = ${dataKey}
+      RETURNING endpoint
+    `;
+    if (updated.length === 0) return res.status(404).json({ error: 'turn on notifications for this device first' });
+    return res.status(200).json({ ok: true, digestHour });
   }
 
   if (req.method === 'DELETE') {
